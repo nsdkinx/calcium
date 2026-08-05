@@ -6,7 +6,7 @@ the repo.
 
 ---
 
-## 0. The pivot (this session, uncommitted at write time)
+## 0. The pivot (this session, commited at write time)
 
 **SDL3-only policy (docs/06-roadmap.md M1):** SDL3 is the *only* backend —
 platform **and** GPU — until the MVP works end to end, the API is stable, and
@@ -37,7 +37,10 @@ that point; they return behind the same `ca::gpu` interface.
   02 diagram + §3.1 + §6 table, 03 layout + options + build matrix,
   06 M1 policy block).
 
-**Not yet done at write time: build + ctest + demo verification** — see §5.
+**Verified after write time** (see §5): fresh configure + build green, 13/13
+ctest passing, `example_clear_color --seconds 3` → 176 frames at 60 Hz,
+compositor p50 0.01 ms / p99 0.02 ms, zero overruns, hardware adapter
+("direct3d11" — SDL's internal driver). Pixels on screen, vsync-paced.
 
 ---
 
@@ -81,7 +84,7 @@ that point; they return behind the same `ca::gpu` interface.
 - `examples/02-clear-color`: the M1 exit demo; `--seconds N` for CI smoke.
 - C++ surface is the static modules; the DLL is reserved for the C ABI (M7).
 
-## 2. What is done but NOT yet committed (working tree)
+## 2. The M2-prep animation module (committed in `f1c3642`, pushed)
 
 The pivot (§0) plus the M2-prep animation module:
 
@@ -113,6 +116,8 @@ thesis in executable form:
   `src/animation/*` (5 .cpp + CMakeLists), `tests/unit/test_animation.cpp`,
   edits to `CMakeLists.txt`, `include/calcium/calcium.hpp`,
   `tests/CMakeLists.txt`.
+- All commits through `6c1e68e` are pushed to origin/main. The only working
+  tree change is this checkpoint.
 
 ## 3. Known issues (none open)
 
@@ -125,10 +130,10 @@ The `gpu_sdl3` failure channel: `begin_clear_pass` returns the error
 void by interface design, so it records into the device and the next acquire
 surfaces it); the compositor records `failure_message_` and stops.
 
-## 4. Next steps after this session's verification (in order)
+## 4. Next steps (in order)
 
-1. **Verify the pivot build** (§5), then commit it ("SDL3-only pivot:
-   archive D3D12, gpu_sdl3 renderer backend on the compositor thread").
+1. ~~Verify the pivot build (§5), then commit it~~ — **done**: build green,
+   13/13 tests, demo verified (see §0). Pivot committed as `6c1e68e`, pushed.
 2. Continue M2 (docs/06-roadmap.md):
    - `ca::layer`: minimal SoA layer tree (position/transform/opacity/
      background), handle-based (docs/02 §4.1).

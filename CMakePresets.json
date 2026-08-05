@@ -1,0 +1,106 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CALCIUM_BUILD_TESTS": "ON",
+        "CALCIUM_BUILD_EXAMPLES": "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "debug",
+      "inherits": "base",
+      "displayName": "Debug (host compiler)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CALCIUM_ENABLE_THREAD_ASSERTIONS": "ON",
+        "CALCIUM_ENABLE_ALLOCATION_SENTINEL": "ON"
+      }
+    },
+    {
+      "name": "release",
+      "inherits": "base",
+      "displayName": "Release (host compiler)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CALCIUM_ENABLE_THREAD_ASSERTIONS": "OFF",
+        "CALCIUM_ENABLE_ALLOCATION_SENTINEL": "OFF"
+      }
+    },
+    {
+      "name": "windows-msvc-debug",
+      "inherits": "debug",
+      "displayName": "Windows MSVC Debug",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "cl", "CMAKE_C_COMPILER": "cl" }
+    },
+    {
+      "name": "windows-msvc-release",
+      "inherits": "release",
+      "displayName": "Windows MSVC Release",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "cl", "CMAKE_C_COMPILER": "cl" }
+    },
+    {
+      "name": "macos-debug",
+      "inherits": "debug",
+      "displayName": "macOS Debug",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
+      "cacheVariables": { "CMAKE_OSX_DEPLOYMENT_TARGET": "12.0" }
+    },
+    {
+      "name": "linux-debug",
+      "inherits": "debug",
+      "displayName": "Linux Debug",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+    {
+      "name": "linux-asan",
+      "inherits": "debug",
+      "displayName": "Linux Debug + ASan/UBSan",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "CMAKE_LINKER_FLAGS": "-fsanitize=address,undefined"
+      }
+    },
+    {
+      "name": "linux-tsan",
+      "inherits": "debug",
+      "displayName": "Linux Debug + TSan (threading contract)",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+        "CMAKE_LINKER_FLAGS": "-fsanitize=thread"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug", "configurePreset": "debug" },
+    { "name": "release", "configurePreset": "release" },
+    { "name": "windows-msvc-debug", "configurePreset": "windows-msvc-debug" },
+    { "name": "windows-msvc-release", "configurePreset": "windows-msvc-release" },
+    { "name": "macos-debug", "configurePreset": "macos-debug" },
+    { "name": "linux-debug", "configurePreset": "linux-debug" }
+  ],
+  "testPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error", "stopOnFailure": false }
+    },
+    {
+      "name": "windows-msvc-debug",
+      "configurePreset": "windows-msvc-debug",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error", "stopOnFailure": false }
+    }
+  ]
+}

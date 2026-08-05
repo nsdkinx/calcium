@@ -13,6 +13,8 @@
 
 #include <cstdint>
 
+#include "calcium/core/export.hpp"
+
 #if defined(CALCIUM_THREAD_ASSERTIONS_ENABLED)
 #  include <source_location>
 #endif
@@ -27,19 +29,19 @@ enum class ThreadRole : std::uint8_t {
     worker,      ///< Pool: glyph raster, image decode, tessellation, measurement.
 };
 
-[[nodiscard]] const char* describe(ThreadRole role) noexcept;
+const char* describe(ThreadRole role) noexcept;
 
 /// Registers the calling thread's role. Called once during startup per thread.
 void register_current_thread_role(ThreadRole role) noexcept;
 
-[[nodiscard]] ThreadRole current_thread_role() noexcept;
+ThreadRole current_thread_role() noexcept;
 
-[[nodiscard]] bool current_thread_has_role(ThreadRole role) noexcept;
+bool current_thread_has_role(ThreadRole role) noexcept;
 
 #if defined(CALCIUM_THREAD_ASSERTIONS_ENABLED)
 
 /// Reports a violation and aborts. Never returns.
-[[noreturn]] void report_thread_affinity_violation(
+void report_thread_affinity_violation(
     ThreadRole expected, ThreadRole actual,
     const std::source_location& location) noexcept;
 

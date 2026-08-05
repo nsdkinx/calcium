@@ -13,6 +13,8 @@
 #include <compare>
 #include <cstdint>
 
+#include "calcium/core/export.hpp"
+
 namespace ca::core {
 
 /// A signed span of time, in seconds.
@@ -77,7 +79,7 @@ public:
     constexpr Timestamp() noexcept = default;
 
     /// Reads the platform's monotonic clock.
-    [[nodiscard]] static Timestamp now() noexcept;
+    static Timestamp now() noexcept;
 
     [[nodiscard]] static constexpr Timestamp from_seconds(double seconds) noexcept {
         return Timestamp{seconds};
@@ -112,10 +114,11 @@ class FrameTimingRecorder {
 public:
     static constexpr std::uint32_t sample_capacity = 256;
 
-    void record_frame(Duration ui_thread, Duration compositor, Duration gpu) noexcept;
+    void record_frame(Duration ui_thread,
+                        Duration compositor, Duration gpu) noexcept;
 
-    [[nodiscard]] Duration median_total() const noexcept;
-    [[nodiscard]] Duration percentile_total(double percentile) const noexcept;
+    Duration median_total() const noexcept;
+    Duration percentile_total(double percentile) const noexcept;
     [[nodiscard]] std::uint32_t recorded_frame_count() const noexcept {
         return recorded_count_;
     }

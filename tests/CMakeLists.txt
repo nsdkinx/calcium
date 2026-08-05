@@ -21,8 +21,8 @@ calcium_add_test(test_small_vector    unit/test_small_vector.cpp)
 calcium_add_test(test_affine_transform unit/test_affine_transform.cpp)
 calcium_add_test(test_path            unit/test_path.cpp)
 calcium_add_test(test_rounded_rectangle unit/test_rounded_rectangle.cpp)
-
-# The Twell convention test is the only target that includes twell.h directly.
+calcium_add_test(test_spsc_ring         unit/test_spsc_ring.cpp)
+calcium_add_test(test_color             unit/test_color.cpp)
 # Production code reaches Twell through ca::animation exclusively (P5).
 calcium_add_test(test_twell_conventions unit/test_twell_conventions.cpp)
 target_link_libraries(test_twell_conventions PRIVATE twell)

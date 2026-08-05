@@ -4,6 +4,7 @@ add_library(calcium_core STATIC
     interned_string.cpp
     thread_affinity.cpp
     time.cpp
+    version.cpp
 )
 add_library(Calcium::core ALIAS calcium_core)
 

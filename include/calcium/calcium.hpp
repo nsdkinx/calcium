@@ -36,9 +36,20 @@
 #include "calcium/geometry/rounded_rectangle.hpp"
 #include "calcium/geometry/transform_3d.hpp"
 
+// ---- Level 2: graphics ----
+#include "calcium/graphics/color.hpp"
+
+// ---- Level 1: gpu, platform ----
+#include "calcium/gpu/graphics_device.hpp"
+#include "calcium/gpu/render_pass.hpp"
+#include "calcium/gpu/swapchain.hpp"
+#include "calcium/platform/application.hpp"
+#include "calcium/platform/display.hpp"
+#include "calcium/platform/event.hpp"
+#include "calcium/platform/window.hpp"
+
 // Modules are added here as their milestones land (docs/06-roadmap.md):
-//   graphics, text, gpu, platform  — M1..M3
-//   animation, layer, layout, view — M2, M4
+//   text — M3; animation, layer, layout, view — M2, M4
 //   widget, compose                — M5, M8
 
 namespace ca {

@@ -9,5 +9,7 @@ add_executable(example_hello_rectangle main.cpp)
 # Links the umbrella shared library, not the static modules directly: examples
 # consume Calcium the way an application does, so a missing export shows up here
 # rather than in someone else's project.
-target_link_libraries(example_hello_rectangle PRIVATE calcium)
+target_link_libraries(example_hello_rectangle PRIVATE
+    calcium_core calcium_geometry
+)
 calcium_apply_warnings(example_hello_rectangle)

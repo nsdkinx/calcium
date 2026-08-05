@@ -59,6 +59,12 @@ endfunction()
 function(calcium_configure_module target)
     calcium_apply_warnings(${target})
 
+    # The modules are compiled into the umbrella shared library, so their
+    # CALCIUM_API-annotated classes must emit dllexport. Harmless when a module
+    # is linked into an executable directly (tests): the export table is
+    # simply unused.
+    target_compile_definitions(${target} PRIVATE CALCIUM_BUILDING_SHARED=1)
+
     target_include_directories(${target} PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>"
         "$<INSTALL_INTERFACE:include>"

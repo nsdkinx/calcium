@@ -67,3 +67,8 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Runtime artifacts (demo runs)
+calcium-trace.csv
+out.txt
+err.txt

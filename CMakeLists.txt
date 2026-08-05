@@ -40,7 +40,10 @@ option(CALCIUM_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 
 # Backends. Off until their milestones (see docs/06-roadmap.md).
 option(CALCIUM_RASTER_SKIA      "Skia rasterizer backend (M2)"     OFF)
-option(CALCIUM_PLATFORM_SDL3    "SDL3 platform backend (M1)"       OFF)
+option(CALCIUM_PLATFORM_SDL3    "SDL3 platform backend (M1)"       ON)
+option(CALCIUM_GPU_D3D12        "D3D12 GPU backend (M1, Windows)"  ON)
+option(CALCIUM_GPU_METAL        "Metal GPU backend (M1, macOS)"    OFF)
+option(CALCIUM_GPU_VULKAN       "Vulkan GPU backend (M1)"          OFF)
 option(CALCIUM_PLATFORM_NATIVE  "Native platform backends (M6)"    OFF)
 option(CALCIUM_SHAPER_HARFBUZZ  "HarfBuzz shaping backend (M3)"    OFF)
 option(CALCIUM_UNICODE_ICU      "ICU unicode backend (M3)"         OFF)
@@ -73,26 +76,54 @@ target_include_directories(twell INTERFACE
 # ---------------------------------------------------------------------------
 add_subdirectory(src/core)
 add_subdirectory(src/geometry)
+add_subdirectory(src/platform)
+add_subdirectory(src/gpu)
+add_subdirectory(src/compositor)
+
+# Backends link only into the umbrella (docs/02-architecture.md §6): the
+# public API never names them, and the umbrella registers their factories.
+add_subdirectory(src/backends)
 
 # The umbrella shared library plus the C ABI. Modules are added here as their
 # milestones land.
 add_library(calcium SHARED src/calcium.cpp)
 add_library(Calcium::calcium ALIAS calcium)
 
+# The C++ API surface is the static modules (docs/04-public-api.md); the DLL
+# exists for the C ABI (P13, M7) and contains the modules so that surface can
+# be exported from one place when the ABI freezes.
 target_link_libraries(calcium
-    PUBLIC
+    PRIVATE
         calcium_core
         calcium_geometry
+        calcium_platform
+        calcium_gpu
+        calcium_backends
 )
 target_include_directories(calcium PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:include>"
 )
+# The umbrella includes src/ for the same reason the modules do: internal
+# headers are never part of the public include path.
+target_include_directories(calcium PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_definitions(calcium
     PRIVATE   CALCIUM_BUILDING_SHARED
     INTERFACE CALCIUM_USING_SHARED
 )
 calcium_apply_warnings(calcium)
+
+# SDL3.dll ships next to the umbrella's DLL so applications can run from the
+# build tree without extra PATH surgery.
+if(CALCIUM_PLATFORM_SDL3)
+    add_custom_command(TARGET calcium POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/third_party/sdl3/lib/SDL3.dll"
+                "$<TARGET_FILE_DIR:calcium>/SDL3.dll"
+        COMMENT "Copying SDL3.dll next to calcium"
+        VERBATIM
+    )
+endif()
 
 set_target_properties(calcium PROPERTIES
     VERSION   ${PROJECT_VERSION}
@@ -131,6 +162,11 @@ endif()
 
 if(CALCIUM_BUILD_EXAMPLES)
     add_subdirectory(examples/01-hello-rectangle)
+    add_subdirectory(examples/02-clear-color)
+endif()
+
+if(CALCIUM_BUILD_TOOLS)
+    add_subdirectory(tools/calcium-tracer)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -144,5 +180,5 @@ message(STATUS "  Tests .............. ${CALCIUM_BUILD_TESTS}")
 message(STATUS "  Examples ........... ${CALCIUM_BUILD_EXAMPLES}")
 message(STATUS "  Thread assertions .. ${CALCIUM_ENABLE_THREAD_ASSERTIONS}")
 message(STATUS "  Alloc sentinel ..... ${CALCIUM_ENABLE_ALLOCATION_SENTINEL}")
-message(STATUS "  Backends: skia=${CALCIUM_RASTER_SKIA} sdl3=${CALCIUM_PLATFORM_SDL3} harfbuzz=${CALCIUM_SHAPER_HARFBUZZ}")
+message(STATUS "  Backends: sdl3=${CALCIUM_PLATFORM_SDL3} d3d12=${CALCIUM_GPU_D3D12} skia=${CALCIUM_RASTER_SKIA}")
 message(STATUS "")

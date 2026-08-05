@@ -33,9 +33,11 @@ public:
     struct Configuration {
         std::string_view name = "Calcium Application";
         std::string_view bundle_identifier = "app.calcium";
-        /// Sizes the Twell arena (M2); ignored until then.
-        std::uint32_t max_animated_properties = 4096;
-        std::uint32_t max_concurrent_gestures = 64;
+        // The animation coordinator (the "one Twell context per
+        // Application" of docs/02 §7) is created by the application's
+        // bootstrap — Application itself is Level 1 and never names Level-3
+        // types (the level DAG, docs/02 §1). The bootstrap sizes the Twell
+        // arena through animation::AnimationCoordinator::Configuration.
     };
 
     /// Creates the application and initializes the platform backend. Fails

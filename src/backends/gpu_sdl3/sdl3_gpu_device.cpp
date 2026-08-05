@@ -2,6 +2,8 @@
 
 #include "sdl3_gpu_device.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -33,6 +35,27 @@ std::string sdl_error_message(const char* what) {
     }
     SDL_ClearError();
     return message;
+}
+
+void set_draw_color(SDL_Renderer* renderer, const float color[4]) {
+    SDL_SetRenderDrawColorFloat(renderer, color[0], color[1], color[2],
+                                color[3]);
+}
+
+SDL_FRect to_frect(geometry::Rect rect) {
+    return {rect.min_x(), rect.min_y(), rect.width(), rect.height()};
+}
+
+// The intersection of two rects; empty when they do not overlap.
+geometry::Rect intersect(geometry::Rect a, geometry::Rect b) {
+    const float left = std::max(a.min_x(), b.min_x());
+    const float top = std::max(a.min_y(), b.min_y());
+    const float right = std::min(a.max_x(), b.max_x());
+    const float bottom = std::min(a.max_y(), b.max_y());
+    if (right <= left || bottom <= top) {
+        return {};
+    }
+    return geometry::Rect::from_edges(left, top, right, bottom);
 }
 
 } // namespace
@@ -67,6 +90,111 @@ void Sdl3RenderPass::end_and_present() {
     // failed present leaves the renderer in an unusable state; record the
     // reason so the next begin_clear_pass reports it (end_and_present is void
     // by design, the interface's failure channel is the next acquire).
+    if (!SDL_RenderPresent(renderer_)) {
+        *present_error_ = "SDL_RenderPresent failed: ";
+        const char* sdl_error = SDL_GetError();
+        if (sdl_error != nullptr) {
+            *present_error_ += sdl_error;
+        }
+        SDL_ClearError();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sdl3DrawPass
+// ---------------------------------------------------------------------------
+
+void Sdl3DrawPass::clear(const float color[4]) {
+    set_draw_color(renderer_, color);
+    SDL_RenderClear(renderer_);
+}
+
+void Sdl3DrawPass::push_clip(geometry::Rect rect) {
+    // The rasterizer converts clip rects to device space before calling;
+    // here they are intersected with the current clip, so nested clips are
+    // exact (SDL has a single render clip).
+    const geometry::Rect next =
+        clip_stack_.empty() ? rect : intersect(clip_stack_.back(), rect);
+    clip_stack_.push_back(next);
+    const SDL_Rect sdl_rect{static_cast<int>(std::floor(next.min_x())),
+                            static_cast<int>(std::floor(next.min_y())),
+                            static_cast<int>(std::ceil(next.width())),
+                            static_cast<int>(std::ceil(next.height()))};
+    // An empty intersection is expressed as a zero-area clip (nothing draws);
+    // the rasterizer culls before emitting, so this is only a fallback.
+    SDL_SetRenderClipRect(renderer_, &sdl_rect);
+}
+
+void Sdl3DrawPass::pop_clip() {
+    clip_stack_.pop_back();
+    if (clip_stack_.empty()) {
+        SDL_SetRenderClipRect(renderer_, nullptr);
+    } else {
+        const geometry::Rect rect = clip_stack_.back();
+        const SDL_Rect sdl_rect{static_cast<int>(std::floor(rect.min_x())),
+                                static_cast<int>(std::floor(rect.min_y())),
+                                static_cast<int>(std::ceil(rect.width())),
+                                static_cast<int>(std::ceil(rect.height()))};
+        SDL_SetRenderClipRect(renderer_, &sdl_rect);
+    }
+}
+
+void Sdl3DrawPass::fill_rect(geometry::Rect rect, const float color[4]) {
+    set_draw_color(renderer_, color);
+    const SDL_FRect frect = to_frect(rect);
+    SDL_RenderFillRect(renderer_, &frect);
+}
+
+void Sdl3DrawPass::fill_polygon(std::span<const geometry::Point> polygon,
+                                const float color[4]) {
+    // Convex polygon → triangle fan from vertex 0 (the rasterizer guarantees
+    // convexity and ordering; a concave fan would render wrong).
+    if (polygon.size() < 3) {
+        return;
+    }
+    vertices_.clear();
+    const std::size_t triangle_count = polygon.size() - 2;
+    // Fan: (0, 1, 2), (0, 2, 3), … — three vertices per triangle.
+    vertices_.reserve(triangle_count * 3);
+    for (std::size_t i = 1; i + 1 < polygon.size(); ++i) {
+        for (const std::size_t corner : {std::size_t{0}, i, i + 1}) {
+            vertices_.push_back(Vertex{
+                .position = {polygon[corner].x, polygon[corner].y},
+                .color = {color[0], color[1], color[2], color[3]},
+            });
+        }
+    }
+    emit_triangles(vertices_);
+}
+
+void Sdl3DrawPass::emit_triangles(std::span<const Vertex> vertices) {
+    if (vertices.empty()) {
+        return;
+    }
+    // SDL_BLENDMODE_BLEND blends as dstRGB = srcRGB·srcA + dst·(1−srcA) —
+    // premultiplied-alpha blending with straight-alpha inputs, which is what
+    // the rasterizer supplies. The blend mode is set once per renderer in
+    // create_renderer and applies to geometry as well as fill rects.
+    if (!SDL_RenderGeometryRaw(
+            renderer_, nullptr,
+            &vertices[0].position.x, sizeof(Vertex),
+            &vertices[0].color, sizeof(Vertex),
+            nullptr, 0,
+            static_cast<int>(vertices.size()),
+            nullptr, 0, 0)) {
+        // A failed geometry call leaves the renderer in an unusable state;
+        // record it the way present failures are recorded (the next acquire
+        // surfaces it through the Result channel).
+        if (present_error_->empty()) {
+            *present_error_ = sdl_error_message("SDL_RenderGeometryRaw failed");
+        }
+    }
+}
+
+void Sdl3DrawPass::end_and_present() {
+    // Same timing model as Sdl3RenderPass: submission is recorded before the
+    // present, which doubles as the pacing wait (see its comment).
+    submitted_at_ = core::Timestamp::now();
     if (!SDL_RenderPresent(renderer_)) {
         *present_error_ = "SDL_RenderPresent failed: ";
         const char* sdl_error = SDL_GetError();
@@ -125,6 +253,13 @@ core::Result<void> Sdl3GpuDevice::create_renderer(SDL_Window* window) {
     if (adapter_name_.empty()) {
         adapter_name_ = "unknown";
     }
+
+    // Alpha blending for the draw pass: SDL_BLENDMODE_BLEND is
+    // premultiplied-alpha blending with straight-alpha inputs
+    // (dstRGB = srcRGB·srcA + dst·(1−srcA)), which is exactly the model the
+    // rasterizer supplies. The mode is renderer-wide; the clear pass is
+    // unaffected (SDL_RenderClear does not blend).
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 
     // The compositor's timing model assumes vsync-paced present. Drivers that
     // cannot honor it report here; the loop then runs unpaced (honest, but
@@ -193,6 +328,24 @@ core::Result<std::unique_ptr<RenderPass>> Sdl3GpuDevice::begin_clear_pass(
 
     return core::Result<std::unique_ptr<RenderPass>>{
         std::unique_ptr<RenderPass>{new Sdl3RenderPass(
+            renderer, &sdl_swapchain, &present_error_, acquired_at)}};
+}
+
+core::Result<std::unique_ptr<DrawPass>> Sdl3GpuDevice::begin_draw_pass(
+    Swapchain& swapchain) {
+    if (!present_error_.empty()) {
+        core::ErrorCode code = core::ErrorCode::backend_failure;
+        std::string message = present_error_;
+        present_error_.clear();
+        return core::Result<std::unique_ptr<DrawPass>>{code, message};
+    }
+
+    auto& sdl_swapchain = static_cast<Sdl3Swapchain&>(swapchain);
+    SDL_Renderer* const renderer = sdl_swapchain.renderer();
+    const core::Timestamp acquired_at = core::Timestamp::now();
+
+    return core::Result<std::unique_ptr<DrawPass>>{
+        std::unique_ptr<DrawPass>{new Sdl3DrawPass(
             renderer, &sdl_swapchain, &present_error_, acquired_at)}};
 }
 

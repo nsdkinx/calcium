@@ -20,11 +20,15 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
+#include <vector>
 
 #include <SDL3/SDL.h>
 
+#include "calcium/gpu/draw_pass.hpp"
 #include "calcium/gpu/graphics_device.hpp"
 #include "calcium/gpu/render_pass.hpp"
 #include "calcium/gpu/swapchain.hpp"
@@ -91,6 +95,59 @@ private:
     core::Timestamp submitted_at_;
 };
 
+// The M2 draw pass: same acquire/present lifecycle as Sdl3RenderPass plus
+// primitive fills. Draw calls are recorded into the SDL render queue in
+// device space (the rasterizer maps model space); clip state is a stack the
+// pass owns (SDL's render clip is a single rect, so the stack lives here).
+//
+// The vertex scratch buffer is reserved once and reused, so steady-state
+// frames never allocate (P8 — the allocation sentinel gate).
+class Sdl3DrawPass final : public DrawPass {
+public:
+    static constexpr std::size_t k_max_clip_depth = 16;
+    static constexpr std::size_t k_scratch_capacity = 512;
+
+    Sdl3DrawPass(SDL_Renderer* renderer, Sdl3Swapchain* swapchain,
+                 std::string* present_error, core::Timestamp acquired_at)
+        : renderer_(renderer), swapchain_(swapchain),
+          present_error_(present_error), acquired_at_(acquired_at) {
+        vertices_.reserve(k_scratch_capacity);
+        clip_stack_.reserve(k_max_clip_depth);
+    }
+
+    void clear(const float color[4]) override;
+    void push_clip(geometry::Rect rect) override;
+    void pop_clip() override;
+    void fill_rect(geometry::Rect rect, const float color[4]) override;
+    void fill_polygon(std::span<const geometry::Point> polygon,
+                      const float color[4]) override;
+    void end_and_present() override;
+
+    [[nodiscard]] core::Timestamp acquired_at() const noexcept override {
+        return acquired_at_;
+    }
+    [[nodiscard]] core::Timestamp submitted_at() const noexcept override {
+        return submitted_at_;
+    }
+
+private:
+    // Interleaved position+color vertex — SDL_RenderGeometryRaw's stride
+    // model (the xy array and the color array both advance by this stride).
+    struct Vertex {
+        SDL_FPoint position;
+        SDL_FColor color;
+    };
+    void emit_triangles(std::span<const Vertex> vertices);
+
+    SDL_Renderer* renderer_ = nullptr;
+    Sdl3Swapchain* swapchain_ = nullptr;
+    std::string* present_error_ = nullptr;
+    core::Timestamp acquired_at_;
+    core::Timestamp submitted_at_;
+    std::vector<Vertex> vertices_;
+    std::vector<geometry::Rect> clip_stack_;
+};
+
 class Sdl3GpuDevice final : public GraphicsDevice {
 public:
     static core::Result<std::unique_ptr<GraphicsDevice>> create(
@@ -108,6 +165,9 @@ public:
 
     [[nodiscard]] core::Result<std::unique_ptr<RenderPass>> begin_clear_pass(
         Swapchain& swapchain, const float clear_color[4]) override;
+
+    [[nodiscard]] core::Result<std::unique_ptr<DrawPass>> begin_draw_pass(
+        Swapchain& swapchain) override;
 
 private:
     // Creates the renderer for `window`: SDL's best driver first, the software

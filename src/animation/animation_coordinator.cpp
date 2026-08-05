@@ -42,6 +42,14 @@ struct AnimationCoordinator::Impl {
     ca::core::SpscRing<std::uint32_t, k_rest_event_capacity> rest_events;
     std::atomic<std::uint32_t> applied_intent_count_{0};
 
+    // Twell allocates a 2D property across TWO slots (x + y) and a 3D across
+    // three, so its slot indices differ from the coordinator's property
+    // indices — and the resting queue reports SLOTS. These two vectors map
+    // slots back to their owning property and track per-slot rest, so a 2D
+    // property reports rest only when every component rests.
+    std::vector<std::uint32_t> slot_to_property;
+    std::vector<std::uint8_t> slot_at_rest;
+
     // --- Seqlock-published snapshot (compositor writes, UI reads) ---
     std::atomic<std::uint32_t> sequence_{0};
     std::vector<double> presentation_values;   // property_count * 3
@@ -53,6 +61,28 @@ struct AnimationCoordinator::Impl {
     std::vector<std::pair<std::vector<std::uint32_t>, std::function<void()>>>
         pending_completions;
     std::atomic<std::uint32_t> next_sequence_number_{1};
+
+    // Marks every Twell slot of a property as in motion (an animation intent
+    // was applied); the property's published at-rest flag follows.
+    void mark_active(std::uint32_t property_index) {
+        const twell_property_id id = twell_ids[property_index];
+        const std::uint32_t dimensionality = dimensionalities[property_index];
+        for (std::uint32_t slot = id; slot < id + dimensionality; ++slot) {
+            slot_at_rest[slot] = 0;
+        }
+        at_rest[property_index] = 0;
+    }
+
+    // Marks every Twell slot of a property as resting (set_immediate /
+    // stop_at_presentation); the property's published at-rest flag follows.
+    void mark_at_rest(std::uint32_t property_index) {
+        const twell_property_id id = twell_ids[property_index];
+        const std::uint32_t dimensionality = dimensionalities[property_index];
+        for (std::uint32_t slot = id; slot < id + dimensionality; ++slot) {
+            slot_at_rest[slot] = 1;
+        }
+        at_rest[property_index] = 1;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -78,6 +108,9 @@ core::Result<std::unique_ptr<AnimationCoordinator>> AnimationCoordinator::create
         return core::Result<std::unique_ptr<AnimationCoordinator>>{
             core::ErrorCode::out_of_memory, "Twell arena allocation failed"};
     }
+    // Slot bookkeeping is sized by the Twell context's property capacity.
+    impl->slot_to_property.resize(configuration.max_animated_properties, 0);
+    impl->slot_at_rest.resize(configuration.max_animated_properties, 1);
     return core::Result<std::unique_ptr<AnimationCoordinator>>{
         std::unique_ptr<AnimationCoordinator>{
             new AnimationCoordinator(std::move(impl))}};
@@ -133,6 +166,12 @@ core::Result<std::uint32_t> AnimationCoordinator::register_property(
     impl_->presentation_values.push_back(initial[2]);
     impl_->at_rest.push_back(1);
     impl_->rest_callbacks.emplace_back();
+
+    // Own the property's Twell slots (1 slot for 1D, 2 for 2D, 3 for 3D).
+    for (std::uint32_t slot = id; slot < id + dimensionality; ++slot) {
+        impl_->slot_to_property[slot] = index;
+        impl_->slot_at_rest[slot] = 1;
+    }
 
     // Published with the snapshot's next even sequence so the new slot is
     // visible coherently.
@@ -304,7 +343,7 @@ void AnimationCoordinator::tick_and_publish(core::Timestamp t_present) {
                                                         target, spring, t);
                     break;
                 }
-                impl_->at_rest[intent.property_index] = 0;
+                impl_->mark_active(intent.property_index);
             } else {
                 // Delayed: stash until the compositor clock reaches start_time.
                 auto& pending = impl_->pending_delays[intent.property_index];
@@ -334,7 +373,7 @@ void AnimationCoordinator::tick_and_publish(core::Timestamp t_present) {
                 break;
             }
             impl_->pending_delays[intent.property_index].occupied = false;
-            impl_->at_rest[intent.property_index] = 1;
+            impl_->mark_at_rest(intent.property_index);
             break;
         case AnimationIntent::Kind::stop_at_presentation_value: {
             // Freeze where it is: read the presentation value and snap to it.
@@ -360,7 +399,7 @@ void AnimationCoordinator::tick_and_publish(core::Timestamp t_present) {
             }
             }
             impl_->pending_delays[intent.property_index].occupied = false;
-            impl_->at_rest[intent.property_index] = 1;
+            impl_->mark_at_rest(intent.property_index);
             break;
         }
         }
@@ -398,7 +437,7 @@ void AnimationCoordinator::tick_and_publish(core::Timestamp t_present) {
             break;
         }
         pending.occupied = false;
-        impl_->at_rest[pending.property_index] = 0;
+        impl_->mark_active(pending.property_index);
     }
 
     // 3. Advance the analytical solutions. Resting properties are reported.
@@ -436,13 +475,29 @@ void AnimationCoordinator::tick_and_publish(core::Timestamp t_present) {
         }
     }
 
-    // 5. Rest events: newly-rested properties get a callback posted (never
-    //    invoked on the compositor — user code must not run here, docs
+    // 5. Rest events: the resting queue reports TWELL SLOTS (a 2D property
+    //    spans two slots); map each back to its property and report rest only
+    //    when every component slot rests. Callbacks are posted, never
+    //    invoked on the compositor — user code must not run here (docs
     //    05-animation-and-twell.md §3.2 step 4).
     for (std::uint32_t i = 0; i < resting_count; ++i) {
-        const std::uint32_t property_index =
-            static_cast<std::uint32_t>(resting[i]);
-        if (property_index < impl_->at_rest.size()) {
+        const std::uint32_t slot = static_cast<std::uint32_t>(resting[i]);
+        if (slot >= impl_->slot_to_property.size()) {
+            continue;
+        }
+        const std::uint32_t property_index = impl_->slot_to_property[slot];
+        impl_->slot_at_rest[slot] = 1;
+        bool all_components_rest = true;
+        const twell_property_id id = impl_->twell_ids[property_index];
+        const std::uint32_t dimensionality =
+            impl_->dimensionalities[property_index];
+        for (std::uint32_t s = id; s < id + dimensionality; ++s) {
+            if (!impl_->slot_at_rest[s]) {
+                all_components_rest = false;
+                break;
+            }
+        }
+        if (all_components_rest && !impl_->at_rest[property_index]) {
             impl_->at_rest[property_index] = 1;
             impl_->rest_events.try_push(property_index);
         }

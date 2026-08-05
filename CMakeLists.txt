@@ -78,7 +78,9 @@ add_subdirectory(src/core)
 add_subdirectory(src/geometry)
 add_subdirectory(src/platform)
 add_subdirectory(src/gpu)
+add_subdirectory(src/graphics)
 add_subdirectory(src/animation)
+add_subdirectory(src/layer)
 add_subdirectory(src/compositor)
 
 # Backends link only into the umbrella (docs/02-architecture.md §6): the
@@ -99,7 +101,9 @@ target_link_libraries(calcium
         calcium_geometry
         calcium_platform
         calcium_gpu
+        calcium_graphics
         calcium_animation
+        calcium_layer
         calcium_backends
 )
 target_include_directories(calcium PUBLIC
@@ -165,6 +169,7 @@ endif()
 if(CALCIUM_BUILD_EXAMPLES)
     add_subdirectory(examples/01-hello-rectangle)
     add_subdirectory(examples/02-clear-color)
+    add_subdirectory(examples/03-spring-rectangle)
 endif()
 
 if(CALCIUM_BUILD_TOOLS)

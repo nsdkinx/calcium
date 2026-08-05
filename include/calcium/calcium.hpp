@@ -38,16 +38,21 @@
 
 // ---- Level 2: graphics ----
 #include "calcium/graphics/color.hpp"
+#include "calcium/graphics/display_list.hpp"
+#include "calcium/graphics/paint.hpp"
 
-// ---- Level 3: animation ----
+// ---- Level 3: animation, layer ----
 #include "calcium/animation/animatable_property.hpp"
 #include "calcium/animation/animation_coordinator.hpp"
 #include "calcium/animation/motion.hpp"
 #include "calcium/animation/motion_scheme.hpp"
 #include "calcium/animation/spring_configuration.hpp"
 #include "calcium/animation/transaction.hpp"
+#include "calcium/layer/layer.hpp"
+#include "calcium/layer/layer_tree.hpp"
 
 // ---- Level 1: gpu, platform ----
+#include "calcium/gpu/draw_pass.hpp"
 #include "calcium/gpu/graphics_device.hpp"
 #include "calcium/gpu/render_pass.hpp"
 #include "calcium/gpu/swapchain.hpp"

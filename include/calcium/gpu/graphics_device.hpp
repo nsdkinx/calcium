@@ -5,10 +5,12 @@
 // The GPU device: the Level-1 doorway (docs/02-architecture.md §6).
 //
 // M1 ships the surface the compositor needs to clear and present a window:
-// device creation, swapchains, and clear render passes. The full command
-// encoder — pipelines, textures, shader modules, custom passes — lands with
-// the display-list rasterizer in M2, on this same interface, so the porting
-// surface stays exactly what it is today: a handful of virtuals.
+// device creation, swapchains, and clear render passes. M2 adds the draw
+// pass — the same acquire/present lifecycle with primitive fills — which is
+// what the display-list rasterizer emits into. The full command encoder —
+// pipelines, textures, shader modules, custom passes — lands with the
+// rasterizer milestone, on this same interface, so the porting surface stays
+// exactly what it is today: a handful of virtuals.
 //
 // Backends are compiled into the umbrella and register themselves;
 // `GraphicsDevice::create` fails with CA_ERROR_UNSUPPORTED when no backend is
@@ -29,6 +31,7 @@ namespace ca::gpu {
 
 class Swapchain;
 class RenderPass;
+class DrawPass;
 
 /// The platform window's native handle, opaque here (Level 1 depends only on
 /// core and geometry — the DAG in docs/02-architecture.md §1; the compositor
@@ -73,6 +76,12 @@ public:
     /// begins a second pass before presenting the first.
     [[nodiscard]] virtual core::Result<std::unique_ptr<RenderPass>>
     begin_clear_pass(Swapchain& swapchain, const float clear_color[4]) = 0;
+
+    /// Begins a draw frame: acquires the back buffer and returns a pass the
+    /// display-list rasterizer fills before `end_and_present()` (M2).
+    /// Same one-frame-at-a-time contract as `begin_clear_pass`.
+    [[nodiscard]] virtual core::Result<std::unique_ptr<DrawPass>>
+    begin_draw_pass(Swapchain& swapchain) = 0;
 };
 
 } // namespace ca::gpu

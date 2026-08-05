@@ -184,6 +184,11 @@ public:
     /// The property's index in the coordinator (diagnostics).
     [[nodiscard]] std::uint32_t property_index() const noexcept { return index_; }
 
+    /// Default-constructed: not registered — unusable until filled by
+    /// `create()`. Storage owners (the layer tree) default-construct rows
+    /// and assign.
+    AnimatableProperty() = default;
+
 private:
     AnimatableProperty(AnimationCoordinator& coordinator, std::uint32_t index)
         : coordinator_(&coordinator), index_(index) {}

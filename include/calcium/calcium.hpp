@@ -19,14 +19,21 @@
 #include "calcium/core/export.hpp"
 #include "calcium/core/arena_allocator.hpp"
 #include "calcium/core/handle.hpp"
+#include "calcium/core/identifier.hpp"
+#include "calcium/core/interned_string.hpp"
 #include "calcium/core/result.hpp"
+#include "calcium/core/small_vector.hpp"
 #include "calcium/core/thread_affinity.hpp"
 #include "calcium/core/time.hpp"
 
 // ---- Level 2: geometry ----
+#include "calcium/geometry/affine_transform.hpp"
+#include "calcium/geometry/path.hpp"
+#include "calcium/geometry/path_builder.hpp"
 #include "calcium/geometry/point.hpp"
 #include "calcium/geometry/quaternion.hpp"
 #include "calcium/geometry/rect.hpp"
+#include "calcium/geometry/rounded_rectangle.hpp"
 #include "calcium/geometry/transform_3d.hpp"
 
 // Modules are added here as their milestones land (docs/06-roadmap.md):

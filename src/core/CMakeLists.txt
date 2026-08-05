@@ -1,5 +1,7 @@
 add_library(calcium_core STATIC
     arena_allocator.cpp
+    identifier.cpp
+    interned_string.cpp
     thread_affinity.cpp
     time.cpp
 )

@@ -1,4 +1,6 @@
 add_library(calcium_geometry STATIC
+    path.cpp
+    rounded_rectangle.cpp
     transform_3d.cpp
 )
 add_library(Calcium::geometry ALIAS calcium_geometry)

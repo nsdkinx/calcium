@@ -61,27 +61,10 @@ core::Result<std::unique_ptr<Compositor>> Compositor::create(
 
     auto compositor = std::unique_ptr<Compositor>{new Compositor(configuration)};
 
-    auto device_result = ca::gpu::GraphicsDevice::create(
-        ca::gpu::GraphicsDevice::Configuration{
-            .enable_debug_layer = false,
-            .enable_gpu_timing = false,
-        });
-    if (!device_result.has_value()) {
-        return core::Result<std::unique_ptr<Compositor>>{
-            device_result.error()};
-    }
-    compositor->device_ = std::move(device_result).take_value();
-    compositor->device_info_ = compositor->device_->adapter_info();
-
-    const platform::Window& window = *configuration.window;
-    auto swapchain_result = compositor->device_->create_swapchain(
-        static_cast<ca::gpu::WindowHandle>(window.native_handle()),
-        window.content_size() * window.scale_factor());
-    if (!swapchain_result.has_value()) {
-        return core::Result<std::unique_ptr<Compositor>>{
-            swapchain_result.error()};
-    }
-    compositor->swapchain_ = std::move(swapchain_result).take_value();
+    // No GPU work here: the device and swapchain are created on the compositor
+    // thread, inside run_loop() — the SDL renderer must be created and used
+    // from one thread, and a flip-model swapchain is affine to its creator
+    // (docs/02-architecture.md §2.3).
 
     if (!configuration.trace_file_path.empty()) {
         compositor->trace_file_.open(std::string(configuration.trace_file_path));
@@ -140,6 +123,38 @@ void Compositor::handle_event(const platform::Event& event) {
 void Compositor::run_loop() {
     core::register_current_thread_role(core::ThreadRole::compositor);
 
+    // Bring the GPU up ON the compositor thread: the SDL renderer must be
+    // created and used from one thread, and a flip-model swapchain is affine
+    // to the thread that created it (docs/02-architecture.md §2.3 — the M1
+    // present bug was exactly this). A failure stops the loop before any
+    // frame; device_ready_/failure_message_ tell the application why.
+    {
+        auto device_result = ca::gpu::GraphicsDevice::create(
+            ca::gpu::GraphicsDevice::Configuration{
+                .enable_debug_layer = false,
+                .enable_gpu_timing = false,
+            });
+        if (!device_result.has_value()) {
+            failure_message_ =
+                std::string(device_result.error().description());
+            return;
+        }
+        device_ = std::move(device_result).take_value();
+
+        const platform::Window& window = *configuration_.window;
+        auto swapchain_result = device_->create_swapchain(
+            static_cast<ca::gpu::WindowHandle>(window.native_handle()),
+            window.content_size() * window.scale_factor());
+        if (!swapchain_result.has_value()) {
+            failure_message_ =
+                std::string(swapchain_result.error().description());
+            return;
+        }
+        swapchain_ = std::move(swapchain_result).take_value();
+        device_info_ = device_->adapter_info();
+        device_ready_ = true;
+    }
+
     while (!stop_requested_.load(std::memory_order_acquire)) {
         const core::Timestamp frame_begin = core::Timestamp::now();
 
@@ -154,6 +169,8 @@ void Compositor::run_loop() {
 
         auto pass_result = device_->begin_clear_pass(*swapchain_, clear_color);
         if (!pass_result.has_value()) {
+            failure_message_ =
+                std::string(pass_result.error().description());
             std::fprintf(stderr, "pass failed: %s\n",
                          std::string(pass_result.error().description()).c_str());
             break;  // the swapchain is gone (window closed under us)
@@ -161,11 +178,13 @@ void Compositor::run_loop() {
         auto pass = std::move(pass_result).take_value();
         pass->end_and_present();
 
-        const core::Timestamp frame_end = core::Timestamp::now();
-        // The frame's work starts when the pacing wait released, so the
-        // recorded compositor time excludes the vsync wait itself.
+        // The frame's work starts when the pacing wait released and ends at
+        // submission, so the recorded compositor time excludes the vsync
+        // wait itself. On backends where present blocks (SDL3), the pass
+        // records submitted_at before that block; on wait-at-start backends
+        // (D3D12) the wait is already before acquired_at.
         const core::Duration compositor_time =
-            frame_end - pass->acquired_at();
+            pass->submitted_at() - pass->acquired_at();
         const core::Duration gpu_time =
             pass->submitted_at() - pass->acquired_at();
 

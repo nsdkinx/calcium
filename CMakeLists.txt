@@ -38,12 +38,12 @@ option(CALCIUM_BUILD_EXAMPLES  "Build the Calcium examples"      ON)
 option(CALCIUM_BUILD_TOOLS     "Build Calcium developer tools"   OFF)
 option(CALCIUM_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 
-# Backends. Off until their milestones (see docs/06-roadmap.md).
+# Backends. SDL3 is the only backend until the MVP lands (docs/06-roadmap.md
+# M1 — the SDL3-only policy); the D3D12/Vulkan/Metal GPU backends return after
+# the core stabilizes.
 option(CALCIUM_RASTER_SKIA      "Skia rasterizer backend (M2)"     OFF)
 option(CALCIUM_PLATFORM_SDL3    "SDL3 platform backend (M1)"       ON)
-option(CALCIUM_GPU_D3D12        "D3D12 GPU backend (M1, Windows)"  ON)
-option(CALCIUM_GPU_METAL        "Metal GPU backend (M1, macOS)"    OFF)
-option(CALCIUM_GPU_VULKAN       "Vulkan GPU backend (M1)"          OFF)
+option(CALCIUM_GPU_SDL3         "SDL3 renderer GPU backend (M1 — the only GPU backend until the MVP)" ON)
 option(CALCIUM_PLATFORM_NATIVE  "Native platform backends (M6)"    OFF)
 option(CALCIUM_SHAPER_HARFBUZZ  "HarfBuzz shaping backend (M3)"    OFF)
 option(CALCIUM_UNICODE_ICU      "ICU unicode backend (M3)"         OFF)
@@ -182,5 +182,5 @@ message(STATUS "  Tests .............. ${CALCIUM_BUILD_TESTS}")
 message(STATUS "  Examples ........... ${CALCIUM_BUILD_EXAMPLES}")
 message(STATUS "  Thread assertions .. ${CALCIUM_ENABLE_THREAD_ASSERTIONS}")
 message(STATUS "  Alloc sentinel ..... ${CALCIUM_ENABLE_ALLOCATION_SENTINEL}")
-message(STATUS "  Backends: sdl3=${CALCIUM_PLATFORM_SDL3} d3d12=${CALCIUM_GPU_D3D12} skia=${CALCIUM_RASTER_SKIA}")
+message(STATUS "  Backends: platform_sdl3=${CALCIUM_PLATFORM_SDL3} gpu_sdl3=${CALCIUM_GPU_SDL3} skia=${CALCIUM_RASTER_SKIA}")
 message(STATUS "")

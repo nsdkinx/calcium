@@ -6,10 +6,11 @@
 // platform layer (docs/02-architecture.md §3.1): it answers "when will the
 // frame I build right now actually be scanned out?" and the compositor ticks
 // animation at exactly that moment. Every platform that can provide the real
-// thing does (CVDisplayLink target time, Choreographer frame deadline,
-// DXGI frame statistics); a backend that cannot must extrapolate from its
-// measured vsync cadence and say so — the degradation is visible rather than
-// silent, which is the point of the contract.
+// thing does (CVDisplayLink target time, Choreographer frame deadline, DXGI
+// frame statistics on the future D3D12 backend); a backend that cannot must
+// extrapolate from its measured vsync cadence and say so — the degradation is
+// visible rather than silent, which is the point of the contract. The SDL3
+// backend (the only backend until the MVP) is the extrapolating kind.
 
 #include <cstdint>
 

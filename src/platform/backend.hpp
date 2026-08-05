@@ -40,7 +40,8 @@ struct BackendWindow {
     virtual void request_close() noexcept = 0;
     [[nodiscard]] virtual bool is_close_requested() const noexcept = 0;
 
-    /// Opaque native handle for the GPU backend (HWND, NSWindow*, …).
+    /// Opaque native handle for the GPU backend. With the SDL3 backend this
+    /// is the SDL_Window* pointer value.
     [[nodiscard]] virtual std::uint64_t native_handle() const = 0;
 
     /// Unique within the Application.

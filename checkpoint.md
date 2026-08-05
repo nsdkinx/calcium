@@ -1,11 +1,47 @@
-# Calcium — Session Checkpoint (2026-08-05, ~3h)
+# Calcium — Session Checkpoint (2026-08-05, ~3h + pivot)
 
-Session goal: continue Calcium per docs/06-roadmap.md, committing and pushing after
-each major feature. Everything below reflects the real, verified state of the repo.
+Session goal: continue Calcium per docs/06-roadmap.md, committing and pushing
+after each major feature. Everything below reflects the real, verified state of
+the repo.
 
 ---
 
-## 1. What shipped (committed AND pushed to origin/main)
+## 0. The pivot (this session, uncommitted at write time)
+
+**SDL3-only policy (docs/06-roadmap.md M1):** SDL3 is the *only* backend —
+platform **and** GPU — until the MVP works end to end, the API is stable, and
+the core is stabilized. D3D12/Vulkan/Metal backends are NOT started before
+that point; they return behind the same `ca::gpu` interface.
+
+- The D3D12 backend was **archived** to `D:\calcium-d3d12-archive\`
+  (with a README: what/why/resurrection path). It also lives in git at
+  `f6eb604`, `d1f9af6`, `f1c3642`.
+- **New `gpu_sdl3` backend** (`src/backends/gpu_sdl3/`): implements the
+  unchanged public `ca::gpu` interface (GraphicsDevice/Swapchain/RenderPass)
+  on SDL3's renderer API — `SDL_RenderClear`/`SDL_RenderPresent`, vsync via
+  `SDL_SetRenderVSync(1)`, best driver first with automatic software fallback.
+  SDL3 picks the driver (on Windows its accelerated driver is SDL's internal
+  choice, e.g. "direct3d11"); Calcium maintains zero GPU code.
+- **The M1 present bug is fixed by construction** (was: flip-model swapchain
+  created on the main thread, presented on the compositor thread → the demo
+  shipped 1 frame, then the window never presented at all). The compositor now
+  creates device + swapchain **on the compositor thread** (`run_loop()`);
+  `device_ready()`/`failure_message()` tell the app why it stopped. SDL
+  renderers must be created and used from one thread — the migration was
+  mandatory, not optional.
+- `Sdl3Window::native_handle()` now returns the `SDL_Window*` pointer value
+  (the HWND extraction existed only for D3D12).
+- CMake: `CALCIUM_GPU_D3D12` → `CALCIUM_GPU_SDL3` (ON). The `sdl3` imported
+  target moved to `src/backends/CMakeLists.txt` (shared by both backends).
+- All docs updated to state the SDL3-only policy explicitly (00 §2.4/§4.2,
+  02 diagram + §3.1 + §6 table, 03 layout + options + build matrix,
+  06 M1 policy block).
+
+**Not yet done at write time: build + ctest + demo verification** — see §5.
+
+---
+
+## 1. What shipped (committed and pushed to origin/main)
 
 ### M0 — Skeleton (complete, commit `7374a1e`, pushed)
 - `ca::core`: `Identifier`, `InternedString`, `SmallVector`, `SpscRing`
@@ -19,33 +55,35 @@ each major feature. Everything below reflects the real, verified state of the re
     derivation and the fitted constants m/a/b).
 - Tests: 10 suites, all passing. Hygiene gate: 18 headers.
 
-### M1 — Window and clear color (complete, commits `f6eb604` + `d1f9af6`, pushed)
+### M1 — Window and clear color (complete, commits `f6eb604` + `d1f9af6`, pushed; GPU path swapped by the pivot)
 - `ca::platform`: `Application`/`Window`/`Display` facades over an internal
   `PlatformBackend` (pimpl; backend never leaks into public headers, P5).
   Event types with full device provenance (P14): pointer (mouse/touch/pen/
   eraser, per-device ids, pressure, tilt), key, scroll (precise vs coarse,
   momentum phases), system. `Display::predicted_presentation_time()` with the
-  honest `provides_hardware_presentation_prediction()` flag.
+  honest `provides_hardware_presentation_prediction()` flag (false on SDL3 —
+  extrapolation from vsync cadence is the documented model).
 - `ca::gpu`: `GraphicsDevice`/`Swapchain`/`RenderPass` interfaces (Level 1
   depends only on core+geometry per the level DAG — clear color is `float[4]`,
   window handle is an opaque uint64). `RenderPass::acquired_at()` is the vsync
   anchor; `submitted_at()` the submit time.
 - `ca::graphics::Color` (sRGB floats; full color pipeline is M2).
 - Backends (never public): `platform_sdl3` (SDL3 3.4.14 vendored under
-  `third_party/sdl3/`, version in VERSION.txt) and `gpu_d3d12`
-  (waitable-swapchain loop, WARP fallback). Registration is explicit:
-  `ca::calcium_register_backends()` — static libs only pull referenced
-  objects, so self-registering statics never link (documented in
-  `src/backends/backend_registration.hpp`).
-- `src/compositor`: `Compositor` owning device+swapchain+thread.
+  `third_party/sdl3/`, version in VERSION.txt) and `gpu_sdl3` (SDL3 renderer,
+  accelerated + software fallback; the ONLY GPU backend until the MVP).
+  Registration is explicit: `ca::calcium_register_backends()` — static libs
+  only pull referenced objects, so self-registering statics never link
+  (documented in `src/backends/backend_registration.hpp`).
+- `src/compositor`: `Compositor` owning device+swapchain+thread; device and
+  swapchain are created ON the compositor thread (docs/02-architecture.md
+  §2.3 — this is the M1 present fix, see §0).
 - `tools/calcium-tracer`: CSV → p50/p95/p99 + overrun counts.
 - `examples/02-clear-color`: the M1 exit demo; `--seconds N` for CI smoke.
-- **Verified measurement** (before the regression below): 60 Hz display,
-  ~51–60 fps vsync-paced, compositor p50 0.30 ms / p99 0.42 ms, zero budget
-  overruns.
 - C++ surface is the static modules; the DLL is reserved for the C ABI (M7).
 
 ## 2. What is done but NOT yet committed (working tree)
+
+The pivot (§0) plus the M2-prep animation module:
 
 ### M2 prep — `ca::animation` (complete, 13/13 tests passing)
 The roadmap's "first three things to write" item #3 — the architecture's
@@ -76,70 +114,22 @@ thesis in executable form:
   edits to `CMakeLists.txt`, `include/calcium/calcium.hpp`,
   `tests/CMakeLists.txt`.
 
-**The whole tree builds and all 13 test suites pass** except for one thing:
-the demo regression below. The animation module is independent of it and can
-be committed now (see §4 step 1).
+## 3. Known issues (none open)
 
-## 3. KNOWN ISSUE — the demo's present path (IN FLIGHT, tree state affected)
+The M1 present bug (1-frame demo, `DXGI_ERROR_INVALID_CALL`, window never
+presented) is **resolved** — not by patching the D3D12 backend but by
+replacing it: the SDL3 renderer backend creates the renderer on the
+compositor thread, which is both the documented fix and SDL's requirement.
+The `gpu_sdl3` failure channel: `begin_clear_pass` returns the error
+(`SDL_RenderClear` failure or a failed prior present — `end_and_present` is
+void by interface design, so it records into the device and the next acquire
+surfaces it); the compositor records `failure_message_` and stops.
 
-**Symptom**: `example_clear_color --seconds 3` ships only 1 frame.
+## 4. Next steps after this session's verification (in order)
 
-**Root cause — fully diagnosed**:
-1. `Present(1, 0)` returns `DXGI_ERROR_INVALID_CALL` (0x887A0001) on the very
-   first frame. Flip-model swapchains are **affine to the thread that created
-   them**: the compositor creates the device+swapchain on the MAIN thread
-   (`Compositor::create`) but presents on the COMPOSITOR thread.
-2. The earlier "working" runs masked this: the loop never checked Present's
-   HRESULT, and with no fence signal queued after the invalid present, the
-   device survived and the loop paced on the waitable — the window in fact
-   never presented anything.
-3. The new per-buffer fence (signaled after Present) EXPOSED it: a fence
-   signal queued after an invalid present kills the device
-   (`DXGI_ERROR_DEVICE_REMOVED`, 0x887A0005) on the next frame.
-
-**The fix (per docs/02-architecture.md §2.3: "ca::gpu::Device — Compositor
-thread")**: create the device AND swapchain ON the compositor thread.
-
-**In-flight state — `src/compositor/compositor.hpp` has ALREADY been updated**
-(new API: `device_ready()`, `failure_message()`, and the `create()` doc
-comment saying no GPU work happens there) **but `compositor.cpp` has NOT yet
-been migrated**. The tree compiles (the new members are simply unused), but
-the demo still exhibits the 1-frame issue. Also, `d3d12_device.cpp` currently
-contains leftover `DBG ...` fprintf instrumentation (3 lines: present hr,
-reset hr, list hr) that must be removed.
-
-**Exactly what remains to finish the fix**:
-```cpp
-// src/compositor/compositor.cpp — Compositor::create:
-//   remove the device/swapchain creation block (keep: window validation,
-//   trace-file open, calcium_register_backends()).
-// Compositor::run_loop():
-//   at the top (compositor thread), before the while loop:
-//     create device; on failure: failure_message_ = "..."; return;
-//     create swapchain (same calls, same sizes); on failure: set message;
-//     device_info_ = device_->adapter_info();
-//     device_ready_ = true;
-//   inside the loop: if Present fails, set failure_message_ and break
-//     (begin_clear_pass/end_and_present already surface failure via Result;
-//      add an explicit Present-hr check in end_and_present).
-// examples/02-clear-color/main.cpp:
-//   move the "adapter : ..." startup print to AFTER compositor->start()
-//   (device_info is now populated by the thread); print failure_message()
-//   when !device_ready().
-// d3d12_device.cpp: remove the three DBG fprintf lines.
-```
-After that, the expected result returns: ~60 fps vsync-paced, p50 < 1 ms,
-zero overruns, AND (now genuinely) pixels on screen.
-
-## 4. Next steps after the demo fix (in order)
-
-1. **Commit the animation module** (`ca::animation`) — it is complete and
-   green; it does not depend on the demo fix.
-2. **Finish the compositor-thread restructure** (§3) and verify:
-   `ctest` (13 suites) + `example_clear_color --seconds 3` (~180 frames).
-3. Commit the demo fix ("compositor owns the GPU: flip swapchain created on
-   the compositor thread").
-4. Continue M2 (docs/06-roadmap.md):
+1. **Verify the pivot build** (§5), then commit it ("SDL3-only pivot:
+   archive D3D12, gpu_sdl3 renderer backend on the compositor thread").
+2. Continue M2 (docs/06-roadmap.md):
    - `ca::layer`: minimal SoA layer tree (position/transform/opacity/
      background), handle-based (docs/02 §4.1).
    - `ca::graphics`: display-list IR + recorder + Paint (docs/02 §6.1).
@@ -158,15 +148,19 @@ zero overruns, AND (now genuinely) pixels on screen.
   ```powershell
   . C:\Users\YutaRedux\AppData\Local\Temp\calcium_env.ps1
   # (sources vcvars64.bat into the process and prepends CMake/Ninja dirs)
-  cmake --preset windows-msvc-debug   # once; pass -DCALCIUM_PLATFORM_SDL3=ON
-                                       # -DCALCIUM_GPU_D3D12=ON if the cache is fresh
+  cmake --preset windows-msvc-debug   # fresh cache: pass -DCALCIUM_PLATFORM_SDL3=ON
+                                       # -DCALCIUM_GPU_SDL3=ON explicitly
   cmake --build build\windows-msvc-debug
   ctest --test-dir build\windows-msvc-debug
   ```
 - SDL3 option was cached OFF from the original configure — set it ON
-  explicitly on first configure.
+  explicitly on first configure. The pivot renamed `CALCIUM_GPU_D3D12` to
+  `CALCIUM_GPU_SDL3`; a stale cache fails loudly at configure — regenerate.
 - Run the demo from `build\windows-msvc-debug` (SDL3.dll is copied next to
-  the umbrella there): `.\bin\example_clear_color.exe --seconds 3`.
+  the umbrella there): `.\bin\example_clear_color.exe --seconds 3` — expect
+  ~180 frames at 60 Hz, vsync-paced, p50 < 1 ms, zero overruns, and (now
+  genuinely) pixels on screen. The adapter line prints SDL's renderer name
+  (e.g. "direct3d11" — SDL's internal driver — or "software").
 - Hygiene gate runs on every build (27 public headers). It also enforces the
   level DAG: `gpu` may depend only on core+geometry (that is why the GPU
   interface takes `float[4]` colors and an opaque window handle, not
@@ -182,19 +176,28 @@ zero overruns, AND (now genuinely) pixels on screen.
   (export.hpp reserved for the C ABI at M7).
 - **Static libs only pull referenced objects**: self-registering backend
   statics never link — registration must be called (backend_registration).
+- **SDL3 3.4 renderer**: `SDL_CreateRenderer(window, name)` has NO flags
+  parameter (the SDL_RENDERER_* flags are gone); driver selection is the
+  `SDL_HINT_RENDER_DRIVER` hint ("software" forces the software driver),
+  vsync is `SDL_SetRenderVSync(renderer, 1)` (unsupported drivers report
+  false — print it, the cadence will visibly stutter). Hint reset is
+  `SDL_ResetHint`, not SDL_UnsetHint (which does not exist in SDL3).
+  `SDL_SetRenderDrawColorFloat` takes sRGB floats directly — no byte
+  quantization on the clear path.
 - **SDL3 3.4 API**: `SDL_PROP_WINDOW_WIN32_HWND_POINTER` IS the HWND (not a
   pointer to it — dereferencing it faults); event union members are
   `tfinger`/`ptouch`/`pmotion`; no `SDL_SendWindowEvent` (push the event);
   `SDL_GetCurrentDisplayMode(SDL_DisplayID)` returns a pointer.
-- **D3D12**: flip-model swapchains are thread-affine to their creator —
-  create them on the compositor thread. The waitable's "slot free" signal
-  does NOT protect buffer reuse; a fence signaled AFTER Present (in queue
-  order) is the correct reuse/pacing guard.
+- **SDL renderers are single-threaded**: create and use on one thread (the
+  compositor's). SDL3's accelerated Windows renderer drives D3D11 internally
+  — SDL's implementation detail, not Calcium's code.
 - **Python heredoc patching** via `bash -c` mangles `\n` escape sequences in
   C++ string literals (Windows CRLF). Use the Edit tool for such edits.
 
 ## 7. Repo hygiene
 
 - `.gitignore` covers `calcium-trace.csv`, `out.txt`, `err.txt` (demo
-  artifacts). All M0/M1 work is committed; the animation module + the
-  in-flight compositor restructure are uncommitted working-tree changes.
+  artifacts). All M0/M1 work is committed; the SDL3-only pivot + the
+  animation module are uncommitted working-tree changes.
+- The D3D12 backend lives outside the repo at `D:\calcium-d3d12-archive\`
+  and in git history (commits `f6eb604`, `d1f9af6`, `f1c3642`).

@@ -82,9 +82,11 @@ level is always available and never leaves the framework.
 ### 2.4 Vertical integration
 Every third-party library is a *second-party implementation of a Calcium
 interface*. Skia implements `ca::graphics::RenderingBackend`. SDL3 implements
-`ca::platform::PlatformBackend`. HarfBuzz implements `ca::text::ShapingBackend`.
-The public API never names, exposes, or leaks any of them. When an in-house
-replacement lands, no user code changes.
+`ca::platform::PlatformBackend` — and, until the MVP, the `ca::gpu::GraphicsDevice`
+backend too (`gpu_sdl3`; see the SDL3-only policy in `docs/06-roadmap.md` M1).
+HarfBuzz implements `ca::text::ShapingBackend`. The public API never names,
+exposes, or leaks any of them. When an in-house replacement lands, no user code
+changes.
 
 ### 2.5 Language reach
 A stable, versioned, opaque-handle C API (`calcium.h`) that is a first-class
@@ -147,12 +149,16 @@ compositor handoff, and the OS scheduler are all outside Calcium's control.
 
 ### 4.2 SDL3 is not sufficient for first-class mobile
 
+**Until the MVP, SDL3 is the only backend — platform *and* GPU** (the SDL3-only
+policy, `docs/06-roadmap.md` M1). That is a sequencing decision, not a
+permanent one:
+
 SDL3 is excellent for windowing, input, and desktop bring-up. It does not
 adequately cover iOS/Android application lifecycle, IME composition,
 accessibility bridges, safe-area insets, dynamic type, or dark-mode
 notifications. Calcium therefore ships **native platform backends** (`AppKit`,
-`UIKit`, `Android`, `Win32`) alongside the SDL3 one. SDL3 is the portable
-bring-up path and the Linux path, not the mobile path.
+`UIKit`, `Android`, `Win32`) alongside the SDL3 one, once the MVP has landed.
+SDL3 is the portable bring-up path and the Linux path, not the mobile path.
 
 ### 4.3 De-vendoring has a difficulty gradient
 

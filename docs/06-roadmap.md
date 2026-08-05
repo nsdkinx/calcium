@@ -31,11 +31,19 @@ green in CI.
 
 ## M1 — Window and clear color (weeks 3–5)
 
+> **Backend policy — SDL3 only, through the MVP.** SDL3 is the *only* backend —
+> platform *and* GPU — until the MVP works end to end, the public API is
+> stable, and Calcium's core is stabilized. The `ca::gpu` interface is
+> implemented by the SDL3 renderer (`gpu_sdl3`, accelerated with a software
+> fallback); the D3D12 / Vulkan / Metal GPU backends are NOT started before
+> that point. They slot in behind the same interface when they return.
+
 - `ca::platform`: `Application`, `Window`, `Display`, event types with full
   device provenance
 - SDL3 backend for Windows/macOS/Linux
-- `ca::gpu`: `GraphicsDevice`, swapchain, render pass; Metal + D3D12 + Vulkan
-  backends sufficient to clear
+- `ca::gpu`: `GraphicsDevice`, swapchain, render pass; the SDL3 renderer
+  sufficient to clear (the only GPU backend until the MVP — see the policy
+  above)
 - Compositor thread, vsync loop, **`predicted_presentation_time()` on all three
   platforms**
 - `calcium-tracer` skeleton recording per-stage timings from day one

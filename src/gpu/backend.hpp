@@ -1,9 +1,11 @@
 // The GPU backend registry (internal).
 //
-// Backends (D3D12, Metal, Vulkan) are compiled into the umbrella library and
-// register their device factories here at static-init time; GraphicsDevice::
-// create consults the registry. An unconfigured build fails with
-// CA_ERROR_UNSUPPORTED at the create call — loudly, at the call site.
+// Backends are compiled into the umbrella library and register their device
+// factories here at static-init time; GraphicsDevice::create consults the
+// registry. SDL3 (gpu_sdl3) is the only GPU backend until the MVP; D3D12,
+// Vulkan and Metal register the same way when they land. An unconfigured
+// build fails with CA_ERROR_UNSUPPORTED at the create call — loudly, at the
+// call site.
 
 #pragma once
 

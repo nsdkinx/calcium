@@ -31,7 +31,9 @@
                                    │
               ┌────────────────────┴────────────────────┐
               │        BACKENDS (never public)          │
-              │  skia · sdl3 · appkit · uikit · android │
+              │  sdl3 (platform + GPU — the ONLY backend│
+              │  until the MVP; see docs/06-roadmap M1) │
+              │  later: skia · appkit · uikit · android │
               │  win32 · harfbuzz · icu · d3d12 · metal │
               │  vulkan · gl                            │
               └─────────────────────────────────────────┘
@@ -198,12 +200,13 @@ t_present = t_last_vsync + (frames_in_flight + 1) × vsync_interval
 Each platform provides the real thing where available:
 `CVDisplayLink`/`CADisplayLink.targetTimestamp` (macOS/iOS),
 `Choreographer.FrameCallback` frame deadline (Android),
-`DXGI_FRAME_STATISTICS` (Windows),
+`DXGI_FRAME_STATISTICS` (Windows, once the D3D12 backend lands),
 `VK_GOOGLE_display_timing` or presentation-feedback (Linux/Wayland).
 
 The `ca::platform::Display` interface requires `predicted_presentation_time()`.
 A backend that cannot provide it must extrapolate from measured vsync cadence and
-say so, so the degradation is visible rather than silent.
+say so, so the degradation is visible rather than silent. The SDL3 backend — the
+only backend until the MVP — is the extrapolating kind.
 
 ---
 
@@ -296,7 +299,7 @@ selected at runtime, and never named in a public header.
 | `platform::backend::Platform` | Windows, input, lifecycle | SDL3 + native | native only |
 | `text::backend::Shaper` | Unicode → positioned glyphs | HarfBuzz | `ca::shape` |
 | `text::backend::UnicodeServices` | Bidi, breaking, normalization | ICU | `ca::unicode` |
-| `gpu::backend::GraphicsDevice` | Command submission | Metal/D3D12/Vulkan/GL | — (these *are* the platform) |
+| `gpu::backend::GraphicsDevice` | Command submission | SDL3 renderer (`gpu_sdl3`) — the only backend until the MVP | D3D12/Vulkan/Metal after the MVP — (these *are* the platform) |
 | `text::backend::FontProvider` | Font enumeration, fallback | CoreText/DirectWrite/FontConfig | — |
 
 Note the honest asymmetry: `gpu` and `FontProvider` backends are *platform APIs*

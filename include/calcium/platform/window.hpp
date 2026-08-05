@@ -12,8 +12,8 @@
 //
 // The native window handle is exposed as an opaque integer so the GPU backend
 // can bind a swapchain to it without naming a platform type in a public header
-// (P5). On Windows this is the HWND value; on macOS the NSWindow pointer value;
-// on Linux the X11 Window / Wayland surface id.
+// (P5). The value is backend-defined: with the SDL3 backend (the only backend
+// until the MVP) it is the SDL_Window* pointer value.
 
 #include <cstdint>
 #include <string_view>

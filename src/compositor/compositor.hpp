@@ -97,7 +97,7 @@ private:
     std::unique_ptr<ca::gpu::GraphicsDevice> device_;
     std::unique_ptr<ca::gpu::Swapchain> swapchain_;
     ca::gpu::GraphicsDevice::AdapterInfo device_info_;
-    bool device_ready_ = false;
+    std::atomic<bool> device_ready_{false};
     std::string failure_message_;
     core::FrameTimingRecorder timing_;
     std::thread thread_;

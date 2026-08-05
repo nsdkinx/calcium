@@ -199,12 +199,14 @@ calcium/
 │   ├── layer/ layout/ view/ accessibility/ widget/ compose/
 │   ├── c_api/                     ← calcium.h implementation
 │   └── backends/
-│       ├── raster_skia/
-│       ├── platform_sdl3/  platform_appkit/  platform_uikit/
-│       ├── platform_android/  platform_win32/
-│       ├── shaper_harfbuzz/  unicode_icu/
-│       ├── font_coretext/  font_directwrite/  font_fontconfig/
-│       └── gpu_metal/  gpu_d3d12/  gpu_vulkan/  gpu_gl/
+│       ├── platform_sdl3/  gpu_sdl3/   ← the ONLY backends until the MVP
+│       │                                 (docs/06-roadmap.md M1 policy)
+│       ├── later: raster_skia/
+│       ├── later: platform_appkit/  platform_uikit/  platform_android/
+│       │        platform_win32/
+│       ├── later: shaper_harfbuzz/  unicode_icu/
+│       ├── later: font_coretext/  font_directwrite/  font_fontconfig/
+│       └── later: gpu_d3d12/  gpu_metal/  gpu_vulkan/  gpu_gl/
 │
 ├── third_party/
 │   └── twell/twell.h              ← the animation kernel (in-house, vendored)
@@ -263,14 +265,17 @@ add_library(calcium            SHARED …)   # umbrella + C API
 target_link_libraries(calcium_animation PRIVATE twell)
 ```
 
-Backends are separate targets linked only into the umbrella:
+Backends are separate targets linked only into the umbrella. SDL3 is the only
+backend until the MVP; the rest default OFF and return per milestone:
 
 ```cmake
-option(CALCIUM_RASTER_SKIA      "Skia rasterizer backend"    ON)
-option(CALCIUM_PLATFORM_SDL3    "SDL3 platform backend"      ON)
-option(CALCIUM_PLATFORM_NATIVE  "Native platform backends"   ON)
-option(CALCIUM_SHAPER_HARFBUZZ  "HarfBuzz shaping backend"   ON)
-option(CALCIUM_UNICODE_ICU      "ICU unicode backend"        ON)
+option(CALCIUM_PLATFORM_SDL3    "SDL3 platform backend (M1)"        ON)
+option(CALCIUM_GPU_SDL3         "SDL3 renderer GPU backend (M1 —    ON
+                                 the only GPU backend until the MVP)")
+option(CALCIUM_RASTER_SKIA      "Skia rasterizer backend (M2)"      OFF)
+option(CALCIUM_PLATFORM_NATIVE  "Native platform backends (M6)"     OFF)
+option(CALCIUM_SHAPER_HARFBUZZ  "HarfBuzz shaping backend (M3)"     OFF)
+option(CALCIUM_UNICODE_ICU      "ICU unicode backend (M3)"          OFF)
 ```
 
 ### 3.1 The header hygiene gate
@@ -295,13 +300,16 @@ cheapest high-value piece of infrastructure in the project.
 
 ## 4. Build matrix
 
+Until the MVP, every row's GPU and platform backend is **SDL3** (the SDL3-only
+policy, docs/06-roadmap.md M1); the table below is the post-MVP target matrix.
+
 | Platform | Compiler | GPU backend | Platform backend | Font provider |
 |---|---|---|---|---|
-| Windows 10+ | MSVC 19.3x, clang-cl | D3D12 → Vulkan → GL | Win32, SDL3 | DirectWrite |
-| macOS 12+ | Apple Clang 14+ | Metal | AppKit, SDL3 | CoreText |
-| Linux | GCC 12+, Clang 15+ | Vulkan → GL | SDL3 (X11/Wayland) | FontConfig |
-| iOS 15+ | Apple Clang 14+ | Metal | UIKit | CoreText |
-| Android 8+ (API 26) | NDK r26 Clang | Vulkan → GLES3 | Android (JNI) | NDK/FontConfig |
+| Windows 10+ | MSVC 19.3x, clang-cl | SDL3 renderer (later: D3D12 → Vulkan → GL) | SDL3 (later: Win32) | DirectWrite |
+| macOS 12+ | Apple Clang 14+ | SDL3 renderer (later: Metal) | SDL3 (later: AppKit) | CoreText |
+| Linux | GCC 12+, Clang 15+ | SDL3 renderer (later: Vulkan → GL) | SDL3 (X11/Wayland) | FontConfig |
+| iOS 15+ | Apple Clang 14+ | (M6) Metal | (M6) UIKit | CoreText |
+| Android 8+ (API 26) | NDK r26 Clang | (M6) Vulkan → GLES3 | (M6) Android (JNI) | NDK/FontConfig |
 
 C++20 required: concepts, `std::span`, designated initializers, `constexpr`
 containers, three-way comparison, `std::source_location` for diagnostics. Modules

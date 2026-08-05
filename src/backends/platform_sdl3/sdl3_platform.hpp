@@ -28,11 +28,12 @@ namespace ca::platform::backend {
 ///
 ///   t_present = t_now + (frames_in_flight + 1) × vsync_interval
 ///
-/// with frames_in_flight = 2 (the D3D12 swapchain's back-buffer count, which
-/// the GPU backend will report through a real API once the frame pipeline
-/// lands). `provides_hardware_prediction` is false: SDL3 has no frame-deadline
-/// feedback, so this model is the documented degradation, visible in
-/// diagnostics rather than silently accepted.
+/// with frames_in_flight = 2 (the value the gpu_sdl3 swapchain reports; SDL
+/// keeps its own buffer count opaque, so the model is calibrated to the
+/// constant and the two sides match by construction). `provides_hardware_
+/// prediction` is false: SDL3 has no frame-deadline feedback, so this model is
+/// the documented degradation, visible in diagnostics rather than silently
+/// accepted.
 class Sdl3DisplayTiming final : public DisplayTiming {
 public:
     explicit Sdl3DisplayTiming(std::uint32_t display_index);

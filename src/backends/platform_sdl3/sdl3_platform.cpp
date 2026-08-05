@@ -16,9 +16,9 @@ constexpr core::Timestamp sdl_ticks_to_timestamp(std::uint64_t ticks_ns) {
     return core::Timestamp::from_seconds(static_cast<double>(ticks_ns) / 1e9);
 }
 
-// The D3D12 swapchain runs two back buffers (src/backends/gpu_d3d12); the
-// presentation-time model uses it as frames_in_flight until the GPU backend
-// reports the number through a real API.
+// The gpu_sdl3 swapchain reports two frames in flight (SDL keeps its own
+// buffer count opaque; see sdl3_platform.hpp — the presentation-time model
+// and the backend are calibrated to the same constant).
 constexpr double k_frames_in_flight = 2.0;
 
 // Maps SDL's button (1 = left, 2 = right, 3 = middle, 4/5 = aux) to the
@@ -114,21 +114,10 @@ bool Sdl3Window::is_close_requested() const noexcept {
 }
 
 std::uint64_t Sdl3Window::native_handle() const {
-#if defined(SDL_PLATFORM_WIN32)
-    // In SDL3 the property value IS the HWND (not a pointer to one), so no
-    // dereference — reading the value as a pointer would fault on the HWND
-    // value itself.
-    void* value = SDL_GetPointerProperty(SDL_GetWindowProperties(window_),
-                                         SDL_PROP_WINDOW_WIN32_HWND_POINTER,
-                                         nullptr);
-    return value != nullptr ? static_cast<std::uint64_t>(
-                                  reinterpret_cast<std::uintptr_t>(value))
-                            : 0;
-#else
-    // Non-Windows targets return the SDL window id; the GPU backends for those
-    // platforms bind through their own properties when they land.
-    return window_id_;
-#endif
+    // The SDL_Window* pointer value: the GPU backend (gpu_sdl3) creates its
+    // renderer from it directly. The HWND extraction this used to do existed
+    // for D3D12's CreateSwapChainForHwnd, which is archived.
+    return reinterpret_cast<std::uint64_t>(window_);
 }
 
 // ---------------------------------------------------------------------------

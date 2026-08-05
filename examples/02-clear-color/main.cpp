@@ -101,12 +101,31 @@ int main(int argc, char** argv) {
                 display.provides_hardware_presentation_prediction()
                     ? "hardware"
                     : "extrapolated (vsync cadence)");
-    std::printf("  adapter : %s (%s)\n",
-                compositor->device_info().name.c_str(),
-                compositor->device_info().is_hardware ? "hardware" : "WARP");
-    std::printf("  tracing : calcium-trace.csv\n\n");
 
     compositor->start();
+
+    // The device comes up on the compositor thread; wait briefly for it (or
+    // for the failure it reports).
+    for (int i = 0; i < 100; ++i) {
+        if (compositor->device_ready()) {
+            break;
+        }
+        if (!compositor->failure_message().empty()) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!compositor->device_ready()) {
+        std::fprintf(stderr, "compositor failed: %s\n",
+                     std::string(compositor->failure_message()).c_str());
+        return 1;
+    }
+    std::printf("  adapter : %s (%s)\n",
+                compositor->device_info().name.c_str(),
+                compositor->device_info().is_hardware ? "hardware"
+                                                      : "software");
+    std::printf("  tracing : calcium-trace.csv\n\n");
+
     app->run();
     compositor->stop();
 

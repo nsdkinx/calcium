@@ -41,7 +41,11 @@ public:
     /// Fills an axis-aligned rectangle (device space).
     virtual void fill_rect(geometry::Rect rect, const float color[4]) = 0;
 
-    /// Fills a convex polygon (device space, ordered, at least 3 points).
+    /// Fills a simple polygon (device space, ordered, at least 3 points)
+    /// that is star-shaped with respect to its own centroid — the fan
+    /// originates at the centroid, so concave outlines (the squircle
+    /// corner curves meet the edges perpendicularly, making them concave
+    /// by design) fill correctly.
     virtual void fill_polygon(std::span<const geometry::Point> polygon,
                               const float color[4]) = 0;
 };

@@ -48,50 +48,74 @@ geometry::Point to_world(const CornerFrame& frame, float u, float v) {
 
 // The two cubics of a continuous corner (P0…P3 and its mirror), sampled into
 // the point stream. See rounded_rectangle.hpp for the control-point spec.
+//
+// The corner curve is emitted from (r, 0) to (0, r) in the corner frame; the
+// outline walk traverses it in reverse for the left corners (see
+// tessellate_rounded_rectangle — the direction alternates by corner so the
+// arcs connect the incoming and outgoing edges of the clockwise walk).
 template <typename Emit>
-void emit_continuous_corner(const CornerFrame& frame, Emit&& emit) {
+void emit_continuous_corner(const CornerFrame& frame, bool reversed,
+                            Emit&& emit) {
     const float r = frame.radius;
     const float a = k_continuous_a * r;
     const float b = k_continuous_b * r;
     const float m = k_continuous_m * r;
-    const float p0[2] = {r, 0.0f};
-    const float p1[2] = {r, a};
-    const float p2[2] = {r, b};
-    const float p3[2] = {m, m};
-    const float q0[2] = {m, m};
-    const float q1[2] = {b, r};
-    const float q2[2] = {a, r};
-    const float q3[2] = {0.0f, r};
-
-    const auto cubic = [&](const float c0[2], const float c1[2],
-                           const float c2[2], const float c3[2],
-                           std::size_t start_segment, std::size_t end_segment) {
-        for (std::size_t i = start_segment; i <= end_segment; ++i) {
-            const float t = static_cast<float>(i) / k_corner_segments;
-            const float omt = 1.0f - t;
-            const float u = omt * omt * omt * c0[0]
-                          + 3.0f * omt * omt * t * c1[0]
-                          + 3.0f * omt * t * t * c2[0]
-                          + t * t * t * c3[0];
-            const float v = omt * omt * omt * c0[1]
-                          + 3.0f * omt * omt * t * c1[1]
-                          + 3.0f * omt * t * t * c2[1]
-                          + t * t * t * c3[1];
-            emit(to_world(frame, u, v));
-        }
+    // forward[c][0..3] are the control points of the two cubics, traversed
+    // from (r, 0) through the diagonal bite (m·r, m·r) to (0, r).
+    const float forward[2][4][2] = {
+        {{r, 0.0f}, {r, a}, {r, b}, {m, m}},   // first cubic
+        {{m, m}, {b, r}, {a, r}, {0.0f, r}},   // mirror cubic
     };
-    // The second cubic shares its start point with the first cubic's end.
-    cubic(p0, p1, p2, p3, 0, k_corner_segments);
-    cubic(q0, q1, q2, q3, 1, k_corner_segments);
+
+    const auto sample = [&](int cubic, float t) -> geometry::Point {
+        const auto& c = forward[cubic];
+        const float omt = 1.0f - t;
+        const float u = omt * omt * omt * c[0][0]
+                      + 3.0f * omt * omt * t * c[1][0]
+                      + 3.0f * omt * t * t * c[2][0]
+                      + t * t * t * c[3][0];
+        const float v = omt * omt * omt * c[0][1]
+                      + 3.0f * omt * omt * t * c[1][1]
+                      + 3.0f * omt * t * t * c[2][1]
+                      + t * t * t * c[3][1];
+        return to_world(frame, u, v);
+    };
+    const float step = 1.0f / static_cast<float>(k_corner_segments);
+    if (reversed) {
+        // Backwards: (0, r) → (m·r, m·r) → (r, 0) — the mirror cubic first
+        // (t descending), then the first cubic (t descending); the shared
+        // diagonal point is emitted once.
+        for (int i = static_cast<int>(k_corner_segments); i >= 1; --i) {
+            emit(sample(1, static_cast<float>(i) * step));
+        }
+        for (int i = static_cast<int>(k_corner_segments); i >= 0; --i) {
+            emit(sample(0, static_cast<float>(i) * step));
+        }
+    } else {
+        // Forward: (r, 0) → (m·r, m·r) → (0, r) — the first cubic (t
+        // ascending), then the mirror cubic (t ascending, skipping the
+        // shared diagonal point).
+        for (int i = 0; i <= static_cast<int>(k_corner_segments); ++i) {
+            emit(sample(0, static_cast<float>(i) * step));
+        }
+        for (int i = 1; i <= static_cast<int>(k_corner_segments); ++i) {
+            emit(sample(1, static_cast<float>(i) * step));
+        }
+    }
 }
 
 // The quarter-arc of a circular corner, sampled into the point stream.
+// Same direction convention as emit_continuous_corner: `reversed` emits the
+// arc from (0, r) to (r, 0).
 template <typename Emit>
-void emit_circular_corner(const CornerFrame& frame, Emit&& emit) {
+void emit_circular_corner(const CornerFrame& frame, bool reversed,
+                          Emit&& emit) {
     const float r = frame.radius;
+    const float quarter_turn = static_cast<float>(0.5 * 3.141592653589793);
     for (std::size_t i = 0; i <= k_corner_segments; ++i) {
         const float t = static_cast<float>(i) / k_corner_segments;
-        const float angle = t * static_cast<float>(0.5 * 3.141592653589793);
+        const float angle =
+            quarter_turn * (reversed ? (1.0f - t) : t);
         emit(to_world(frame, r * std::cos(angle), r * std::sin(angle)));
     }
 }
@@ -121,18 +145,27 @@ std::size_t tessellate_rounded_rectangle(
     };
 
     std::size_t count = 0;
-    for (const Corner& corner : corners) {
+    for (std::size_t index = 0; index < 4; ++index) {
+        const Corner& corner = corners[index];
         const CornerFrame frame{corner.origin_x, corner.origin_y,
                                 corner.axis_x, corner.axis_y, corner.radius};
         if (corner.radius <= 0.0f) {
             out[count++] = to_world(frame, 0.0f, 0.0f);  // the apex
             continue;
         }
+        // The clockwise walk enters each corner on one edge and exits on the
+        // next. In the corner frame (axes toward the rect center) the
+        // incoming edge is the y-axis edge for TL and BR (the walk runs up
+        // the left edge, down the right edge) and the x-axis edge for TR and
+        // BL — so the arc direction alternates by corner. Emitting every
+        // corner the same way draws diagonals across the interior and a
+        // glitched outline.
+        const bool reversed = (index % 2) == 0;
         if (rr.corner_curve == geometry::CornerCurve::circular) {
-            emit_circular_corner(frame,
+            emit_circular_corner(frame, reversed,
                                  [&](geometry::Point p) { out[count++] = p; });
         } else {
-            emit_continuous_corner(frame,
+            emit_continuous_corner(frame, reversed,
                                    [&](geometry::Point p) { out[count++] = p; });
         }
     }

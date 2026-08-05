@@ -147,19 +147,44 @@ void Sdl3DrawPass::fill_rect(geometry::Rect rect, const float color[4]) {
 
 void Sdl3DrawPass::fill_polygon(std::span<const geometry::Point> polygon,
                                 const float color[4]) {
-    // Convex polygon → triangle fan from vertex 0 (the rasterizer guarantees
-    // convexity and ordering; a concave fan would render wrong).
+    // The contract (draw_pass.hpp): a simple polygon star-shaped with
+    // respect to its own centroid — which the rasterizer's rounded-rect
+    // outlines are (the squircle corners are concave by design). The fan
+    // originates at the centroid, so it covers the polygon exactly; a fan
+    // from an edge vertex would spill across concave corners.
     if (polygon.size() < 3) {
         return;
     }
+    // Shoelace: twice the signed area and the centroid.
+    double area2 = 0.0;
+    double centroid_x = 0.0;
+    double centroid_y = 0.0;
+    for (std::size_t i = 0; i < polygon.size(); ++i) {
+        const geometry::Point& a = polygon[i];
+        const geometry::Point& b = polygon[(i + 1) % polygon.size()];
+        const double cross =
+            static_cast<double>(a.x) * b.y - static_cast<double>(b.x) * a.y;
+        area2 += cross;
+        centroid_x += (static_cast<double>(a.x) + b.x) * cross;
+        centroid_y += (static_cast<double>(a.y) + b.y) * cross;
+    }
+    if (area2 == 0.0) {
+        return;  // degenerate
+    }
+    centroid_x /= 3.0 * area2;
+    centroid_y /= 3.0 * area2;
+
     vertices_.clear();
-    const std::size_t triangle_count = polygon.size() - 2;
-    // Fan: (0, 1, 2), (0, 2, 3), … — three vertices per triangle.
-    vertices_.reserve(triangle_count * 3);
-    for (std::size_t i = 1; i + 1 < polygon.size(); ++i) {
-        for (const std::size_t corner : {std::size_t{0}, i, i + 1}) {
+    // Fan: (C, V_i, V_{i+1}) for every edge — three vertices per triangle.
+    vertices_.reserve(polygon.size() * 3);
+    for (std::size_t i = 0; i < polygon.size(); ++i) {
+        const geometry::Point& b = polygon[(i + 1) % polygon.size()];
+        for (const auto& corner :
+             {geometry::Point{static_cast<float>(centroid_x),
+                              static_cast<float>(centroid_y)},
+              polygon[i], b}) {
             vertices_.push_back(Vertex{
-                .position = {polygon[corner].x, polygon[corner].y},
+                .position = {corner.x, corner.y},
                 .color = {color[0], color[1], color[2], color[3]},
             });
         }

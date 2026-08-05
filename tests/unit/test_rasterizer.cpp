@@ -236,6 +236,78 @@ CA_TEST(rasterizer_rounded_rectangle_tessellates_inside_bounds) {
     CA_CHECK(has_rounded_corner);
 }
 
+CA_TEST(rasterizer_rounded_rectangle_outline_and_fan) {
+    // The tessellation must trace a proper clockwise outline of the rounded
+    // rect: the four straight edges appear as consecutive vertex pairs, and
+    // the centroid fan — exactly what the pass renders — must cover the
+    // polygon (its area equals the shoelace area). The outline is NOT
+    // convex: the squircle corner curves meet the edges perpendicularly, so
+    // the corners are concave by design — a fan from an edge vertex would
+    // spill across them (the glitched-shape bug this guards against).
+    DisplayListRecorder recorder;
+    recorder.fill_rounded_rectangle(
+        RoundedRectangle::uniform(Rect{0, 0, 200, 120}, 24.0f),
+        Paint::solid_color(Color::white()));
+    const DisplayList list = recorder.seal();
+
+    RecordingPass pass;
+    ca::graphics::rasterizer::draw(list, pass, AffineTransform::identity(),
+                                   1.0f);
+    CA_CHECK(pass.polygons.size() == 1);
+    const auto& polygon = pass.polygons[0].polygon;
+    CA_CHECK(polygon.size() == 68);  // 4 corners × 17 samples
+
+    // The four straight boundary edges, as consecutive vertex pairs.
+    bool has_top_edge = false, has_right_edge = false;
+    bool has_bottom_edge = false, has_left_edge = false;
+    for (std::size_t i = 0; i < polygon.size(); ++i) {
+        const Point a = polygon[i];
+        const Point b = polygon[(i + 1) % polygon.size()];
+        const bool horizontal = std::fabs(a.y - b.y) < 1e-4f;
+        const bool vertical = std::fabs(a.x - b.x) < 1e-4f;
+        if (horizontal && a.y == 0.0f && a.x < b.x) {
+            has_top_edge = true;
+        } else if (vertical && a.x == 200.0f && a.y < b.y) {
+            has_right_edge = true;
+        } else if (horizontal && a.y == 120.0f && b.x < a.x) {
+            has_bottom_edge = true;
+        } else if (vertical && a.x == 0.0f && b.y < a.y) {
+            has_left_edge = true;
+        }
+    }
+    CA_CHECK(has_top_edge && has_right_edge && has_bottom_edge && has_left_edge);
+
+    // The centroid fan covers the polygon: shoelace area == fan area, and
+    // every fan triangle winds the same way (star-shaped w.r.t. the
+    // centroid — the pass's contract).
+    double area2 = 0.0, centroid_x = 0.0, centroid_y = 0.0;
+    for (std::size_t i = 0; i < polygon.size(); ++i) {
+        const Point a = polygon[i];
+        const Point b = polygon[(i + 1) % polygon.size()];
+        const double cross =
+            static_cast<double>(a.x) * b.y - static_cast<double>(b.x) * a.y;
+        area2 += cross;
+        centroid_x += (static_cast<double>(a.x) + b.x) * cross;
+        centroid_y += (static_cast<double>(a.y) + b.y) * cross;
+    }
+    CA_CHECK(area2 > 0.0);  // clockwise winding (y-down)
+    centroid_x /= 3.0 * area2;
+    centroid_y /= 3.0 * area2;
+
+    double fan_area2 = 0.0;
+    for (std::size_t i = 0; i < polygon.size(); ++i) {
+        const Point b = polygon[(i + 1) % polygon.size()];
+        const Point c{static_cast<float>(centroid_x),
+                      static_cast<float>(centroid_y)};
+        const double cross =
+            static_cast<double>(polygon[i].x - c.x) * (b.y - c.y)
+            - static_cast<double>(polygon[i].y - c.y) * (b.x - c.x);
+        CA_CHECK(cross > 0.0);  // every fan triangle winds clockwise
+        fan_area2 += cross;
+    }
+    CA_CHECK_NEAR(fan_area2, area2, area2 * 1e-3);
+}
+
 CA_TEST(rasterizer_rounded_rectangle_plain_rect_fast_path) {
     DisplayListRecorder recorder;
     recorder.fill_rounded_rectangle(

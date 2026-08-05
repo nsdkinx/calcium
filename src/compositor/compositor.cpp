@@ -154,6 +154,8 @@ void Compositor::run_loop() {
 
         auto pass_result = device_->begin_clear_pass(*swapchain_, clear_color);
         if (!pass_result.has_value()) {
+            std::fprintf(stderr, "pass failed: %s\n",
+                         std::string(pass_result.error().description()).c_str());
             break;  // the swapchain is gone (window closed under us)
         }
         auto pass = std::move(pass_result).take_value();

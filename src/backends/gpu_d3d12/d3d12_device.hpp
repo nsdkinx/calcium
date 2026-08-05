@@ -58,6 +58,16 @@ public:
         return pacing_handle_;
     }
 
+    /// Waits until the GPU has finished the work recorded for `index`'s
+    /// previous frame (the waitable guarantees the buffer is free; the fence
+    /// guarantees the command allocator is reusable). Called by the frame
+    /// loop's pass.
+    void wait_for_buffer_idle(std::uint32_t index);
+    /// Signals that the frame recorded for `index` has been submitted (must
+    /// be queued after that frame's ExecuteCommandLists).
+    void signal_buffer_submitted(std::uint32_t index,
+                                 ID3D12CommandQueue* queue);
+
 private:
     void create_back_buffers();
 
@@ -65,6 +75,9 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Device> device_;
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> rtv_heap_;
     Microsoft::WRL::ComPtr<ID3D12Resource> back_buffers_[3];
+    Microsoft::WRL::ComPtr<ID3D12Fence> fences_[3];
+    HANDLE fence_events_[3] = {};
+    std::uint64_t fence_values_[3] = {};
     void* pacing_handle_ = nullptr;
     std::uint32_t frames_in_flight_ = 2;
     std::uint32_t rtv_descriptor_size_ = 0;

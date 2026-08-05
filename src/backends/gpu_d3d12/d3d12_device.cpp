@@ -109,7 +109,28 @@ D3D12Swapchain::D3D12Swapchain(
     rtv_descriptor_size_ =
         device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     pacing_handle_ = swapchain_->GetFrameLatencyWaitableObject();
+    for (std::uint32_t index = 0; index < frames_in_flight_; ++index) {
+        device_->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fences_[index]));
+        fence_events_[index] = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    }
     create_back_buffers();
+}
+
+void D3D12Swapchain::wait_for_buffer_idle(std::uint32_t index) {
+    if (fences_[index] == nullptr || fence_values_[index] == 0) {
+        return;  // the buffer has never been submitted; nothing to wait for
+    }
+    if (fences_[index]->GetCompletedValue() >= fence_values_[index]) {
+        return;
+    }
+    fences_[index]->SetEventOnCompletion(fence_values_[index],
+                                         fence_events_[index]);
+    WaitForSingleObject(fence_events_[index], INFINITE);
+}
+
+void D3D12Swapchain::signal_buffer_submitted(std::uint32_t index,
+                                             ID3D12CommandQueue* queue) {
+    queue->Signal(fences_[index].Get(), ++fence_values_[index]);
 }
 
 void D3D12Swapchain::create_back_buffers() {
@@ -155,10 +176,12 @@ class D3D12RenderPass final : public RenderPass {
 public:
     D3D12RenderPass(Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue,
                     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> list,
-                    IDXGISwapChain3* swapchain, core::Timestamp acquired_at)
+                    D3D12Swapchain* swapchain, std::uint32_t back_buffer_index,
+                    core::Timestamp acquired_at)
         : queue_(std::move(queue)),
           list_(std::move(list)),
           swapchain_(swapchain),
+          back_buffer_index_(back_buffer_index),
           acquired_at_(acquired_at) {}
 
     void end_and_present() override {
@@ -166,7 +189,14 @@ public:
         ID3D12CommandList* const lists[] = {list_.Get()};
         queue_->ExecuteCommandLists(1, lists);
         // SyncInterval = 1: scanout is locked to vsync.
-        swapchain_->Present(1, 0);
+        const HRESULT present_hr = swapchain_->native()->Present(1, 0);
+        std::fprintf(stderr, "DBG present hr=%08x\n", (unsigned)present_hr);
+        // The fence is signaled AFTER Present, in GPU queue order: it fires
+        // only when the present has been consumed by scanout, so the next
+        // frame's wait on this buffer guarantees both the allocator AND the
+        // buffer itself are reusable (presenting a still-queued buffer twice
+        // removes the device).
+        swapchain_->signal_buffer_submitted(back_buffer_index_, queue_.Get());
         submitted_at_ = core::Timestamp::now();
     }
 
@@ -181,7 +211,8 @@ public:
 private:
     Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue_;
     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> list_;
-    IDXGISwapChain3* swapchain_;
+    D3D12Swapchain* swapchain_;
+    std::uint32_t back_buffer_index_;
     core::Timestamp acquired_at_;
     core::Timestamp submitted_at_;
 };
@@ -329,20 +360,21 @@ core::Result<std::unique_ptr<RenderPass>> D3D12Device::begin_clear_pass(
     Swapchain& swapchain, const float clear_color[4]) {
     D3D12Swapchain& d3d12_swapchain = static_cast<D3D12Swapchain&>(swapchain);
 
-    // Pace to the display: block until a back buffer is free. This wait is the
-    // compositor's vsync anchor (docs/02-architecture.md §3.1).
-    if (d3d12_swapchain.pacing_handle() != nullptr) {
-        WaitForSingleObject(static_cast<HANDLE>(d3d12_swapchain.pacing_handle()),
-                            INFINITE);
-    }
+    // The buffer we are about to present: the flip-model index advances only
+    // when the previous present is consumed by scanout, so this is the buffer
+    // whose present is still (or last was) in flight.
+    const std::uint32_t index =
+        d3d12_swapchain.native()->GetCurrentBackBufferIndex();
+    // Wait for THIS buffer's previous present to be consumed: the fence is
+    // signaled on the GPU queue after Present, so it fires at scanout. This
+    // paces the loop to the display cadence (docs/02-architecture.md §3.1)
+    // and guarantees the buffer is safe to present again — the waitable's
+    // "a slot is free" signal alone does not.
+    d3d12_swapchain.wait_for_buffer_idle(index);
     // The wait released: the frame's vsync anchor and the start of its work.
     const core::Timestamp acquired_at = core::Timestamp::now();
 
-    const std::uint32_t index =
-        d3d12_swapchain.native()->GetCurrentBackBufferIndex();
-
-    // One allocator + list per back buffer, reused once the waitable has
-    // released the buffer (which implies its GPU work completed).
+    // One allocator + list per back buffer, protected by the same fence.
     static thread_local std::array<
         Microsoft::WRL::ComPtr<ID3D12CommandAllocator>, k_frames_in_flight>
         allocators;
@@ -359,13 +391,18 @@ core::Result<std::unique_ptr<RenderPass>> D3D12Device::begin_clear_pass(
                 "command allocator creation failed"};
         }
     }
-    allocator->Reset();
+    const HRESULT reset_hr = allocator->Reset();
+    if (FAILED(reset_hr)) {
+        std::fprintf(stderr, "DBG reset hr=%08x idx=%u\n", (unsigned)reset_hr, index);
+    }
 
     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList>& list = lists[index];
     if (list == nullptr) {
-        if (FAILED(device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
-                                              allocator.Get(), nullptr,
-                                              IID_PPV_ARGS(&list)))) {
+        const HRESULT hr = device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                                      allocator.Get(), nullptr,
+                                                      IID_PPV_ARGS(&list));
+        std::fprintf(stderr, "DBG list hr=%08x idx=%u\n", (unsigned)hr, index);
+        if (FAILED(hr)) {
             return core::Result<std::unique_ptr<RenderPass>>{
                 core::ErrorCode::backend_failure, "command list creation failed"};
         }
@@ -405,7 +442,7 @@ core::Result<std::unique_ptr<RenderPass>> D3D12Device::begin_clear_pass(
 
     return core::Result<std::unique_ptr<RenderPass>>{
         std::unique_ptr<RenderPass>{new D3D12RenderPass(
-            queue_, std::move(list), d3d12_swapchain.native(), acquired_at)}};
+            queue_, std::move(list), &d3d12_swapchain, index, acquired_at)}};
 }
 
 } // namespace ca::gpu

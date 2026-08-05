@@ -461,6 +461,17 @@ private:
 
 Reached from any layer or view without leaving the framework.
 
+M2 ships the subset — the signatures below are the design target and remain
+stable as the rest lands:
+
+- `DrawingContext`: save/restore, 2D affine concatenation, rect and rounded-
+  rect fills, global alpha (folded into paints at record time). `Transform3D`
+  concatenation, paths, text, images, and filters land with their milestones.
+- `Paint`: solid colors only (`solid_color`, `with_alpha_multiplied_by`);
+  gradients and shaders land with the color pipeline.
+- `DisplayListRecorder` + sealed `DisplayList`: the IR's M2 record set and
+  encoding are the contract (docs/02 §6.1).
+
 ```cpp
 namespace ca::graphics {
 

@@ -251,6 +251,14 @@ difference between a professional application feeling responsive and not.
 — not a pointer to storage. Handles are validated on every access in debug and
 release, so use-after-free becomes a diagnosable error rather than a crash.
 
+The M2 implementation follows this: `LayerTree` publishes immutable
+`FramePacket`s — true structure-of-arrays, which is what the compositor's
+resolve loop walks each frame — while the per-layer property objects live in a
+side pool with stable addresses so `Layer::position()` returns a reference
+that survives pool growth (layer_tree.hpp). The packet is the re-composition
+unit of §2.2: animating a compositor-resolvable property never needs a new
+packet; mutating static state requires a `commit()`.
+
 ---
 
 ## 5. Layout: three-phase negotiation
@@ -332,6 +340,17 @@ color space, stroke join and cap geometry, dash phase, clip antialiasing
 composition, and glyph position rounding policy. **The golden-image conformance
 suite is the executable form of that spec.**
 
+M2 ships the subset: `save_state` / `restore_state` / `concat_transform` /
+`clip_rect` / `fill_rect` / `fill_rounded_rectangle`, with an interned
+solid-color paint table. The record encoding is the contract
+(`include/calcium/graphics/display_list.hpp`); the rasterizer
+(`src/graphics/rasterizer.cpp`) is where the geometry logic — rounded-rect
+corner tessellation (circular and the G2 `continuous` spec) and clip
+conversion — lives, so every backend reuses it. Coverage antialiasing is
+deliberately absent in M2; it lands with the conformance suite. `set_global_alpha`
+is folded into paints at record time, so the rasterizer's state is exactly
+CTM + clip.
+
 ---
 
 ## 7. Where Twell sits
@@ -362,7 +381,9 @@ Concretely:
 
 - One Twell context per `Application`, arena sized via
   `twell_get_memory_requirement()` and grown by adding a second context when
-  exhausted (contexts are cheap; the arena is not resizable in place).
+  exhausted (contexts are cheap; the arena is not resizable in place). The
+  coordinator is created by the application's bootstrap — `Application`
+  itself is Level 1 and never names Level-3 types (the level DAG, §1).
 - `AnimatableProperty<T>` wraps a `twell_property_id`. `T` maps to 1D/2D/3D
   Twell properties; a 4×4 `Transform` decomposes into translation (3D), scale
   (3D), rotation (quaternion, slerped), so it interpolates correctly instead of
@@ -370,6 +391,9 @@ Concretely:
 - Twell's resting queue from `twell_context_tick` drives completion callbacks and
   lets the compositor **stop waking** when the tree is fully at rest — this is
   the idle-power story, and it comes free from a facility Twell already has.
+  (M2 note: the resting queue reports Twell *slots*, and a 2D property spans
+  two slots — the coordinator maps slots back to properties so a property
+  reports rest only when every component rests.)
 - `twell_property_add_driver` is exposed as `ca::animation::PropertyLink`, which
   is how scroll-linked effects (parallax, collapsing headers, bottom sheets with
   scaling backdrops) are expressed without any per-frame application code.

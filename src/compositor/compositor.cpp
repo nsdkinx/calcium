@@ -9,37 +9,15 @@
 #include "calcium/graphics/color.hpp"
 #include "calcium/gpu/render_pass.hpp"
 #include "calcium/gpu/swapchain.hpp"
+#include "graphics/rasterizer.hpp"
 
 namespace ca::compositor {
 
 namespace {
 
-// The M1 frame value: an analytic hue cycle over the presentation timestamp.
-// This is the stand-in for Twell (M2) — a smooth function of absolute time
-// evaluated on the compositor, never stepped by the application clock. The
-// speed is one full hue rotation per four seconds, chosen to make cadence
-// errors visible: at a wrong refresh rate the cycle visibly stutters.
-graphics::Color animated_clear_color(core::Timestamp t_present) {
-    constexpr double k_seconds_per_cycle = 4.0;
-    const double hue = std::fmod(t_present.seconds() / k_seconds_per_cycle, 1.0);
-
-    // HSV → RGB, hue in [0, 1).
-    const double sector = hue * 6.0;
-    const double region = std::floor(sector);
-    const double f = sector - region;
-    const double p = 0.0, q = 0.4 * (1.0 - f), t = 0.4 * (1.0 - (1.0 - f));
-    double r = 0.0, g = 0.0, b = 0.0;
-    switch (static_cast<int>(region)) {
-    case 0: r = 0.4, g = t, b = p; break;
-    case 1: r = q, g = 0.4, b = p; break;
-    case 2: r = p, g = 0.4, b = t; break;
-    case 3: r = p, g = q, b = 0.4; break;
-    case 4: r = t, g = p, b = 0.4; break;
-    default: r = 0.4, g = p, b = q; break;
-    }
-    return graphics::Color::srgb(static_cast<float>(r), static_cast<float>(g),
-                                 static_cast<float>(b), 1.0f);
-}
+// The window background before any layer covers it (dark, so a stale frame
+// reads as intentional rather than as a white flash).
+constexpr float k_window_background[4] = {0.02f, 0.02f, 0.04f, 1.0f};
 
 } // namespace
 
@@ -53,6 +31,13 @@ core::Result<std::unique_ptr<Compositor>> Compositor::create(
     if (configuration.window == nullptr) {
         return core::Result<std::unique_ptr<Compositor>>{
             core::ErrorCode::invalid_argument, "compositor needs a window"};
+    }
+    if ((configuration.animation == nullptr) !=
+        (configuration.layer_tree == nullptr)) {
+        return core::Result<std::unique_ptr<Compositor>>{
+            core::ErrorCode::invalid_argument,
+            "compositor needs both the coordinator and the layer tree (or "
+            "neither — the M1 clear-only path)"};
     }
 
     // The compositor is the framework component that consumes both backends;
@@ -90,6 +75,7 @@ void Compositor::start() {
 
 void Compositor::stop() {
     stop_requested_.store(true, std::memory_order_release);
+    wake_cv_.notify_all();
     if (thread_.joinable()) {
         thread_.join();
     }
@@ -101,6 +87,15 @@ void Compositor::stop() {
 
 void Compositor::request_stop() noexcept {
     stop_requested_.store(true, std::memory_order_release);
+    wake_cv_.notify_all();
+}
+
+void Compositor::request_repaint() noexcept {
+    {
+        std::lock_guard lock{wake_mutex_};
+        repaint_requested_ = true;
+    }
+    wake_cv_.notify_all();
 }
 
 void Compositor::handle_event(const platform::Event& event) {
@@ -113,11 +108,24 @@ void Compositor::handle_event(const platform::Event& event) {
         if (swapchain_ != nullptr) {
             // The swapchain works in device pixels; SDL reports pixel size.
             swapchain_->resize(geometry::Size{system.size.x, system.size.y});
+            // The renderer follows the window's size; present once at the
+            // new size (a resize while idle would otherwise never repaint).
+            request_repaint();
         }
         break;
     default:
         break;
     }
+}
+
+void Compositor::wait_for_wake() {
+    std::unique_lock lock{wake_mutex_};
+    wake_cv_.wait(lock, [this] {
+        return stop_requested_.load(std::memory_order_acquire)
+            || repaint_requested_;
+    });
+    // The repaint request is consumed by the frame that follows.
+    repaint_requested_ = false;
 }
 
 void Compositor::run_loop() {
@@ -155,42 +163,184 @@ void Compositor::run_loop() {
         device_ready_ = true;
     }
 
+    const bool m2_path = configuration_.animation != nullptr;
+    bool idle = false;
+
     while (!stop_requested_.load(std::memory_order_acquire)) {
-        const core::Timestamp frame_begin = core::Timestamp::now();
+        if (idle) {
+            // Everything is at rest: stop waking entirely — the idle-CPU-0%
+            // story (docs/02-architecture.md §7). A wake means work.
+            wait_for_wake();
+            idle = false;
+            continue;
+        }
 
         // The presentation timestamp: when this frame will scan out. Twell
-        // will tick at exactly this moment (M2); today the clear color is an
-        // analytic function of it, so the same timing contract is exercised.
+        // ticks at exactly this moment, so the animation values in this
+        // frame are solved for the instant it is seen (docs/02 §3.1).
         const platform::Display display = configuration_.window->display();
         const core::Timestamp t_present = display.predicted_presentation_time();
-        const graphics::Color color = animated_clear_color(t_present);
-        const float clear_color[4] = {color.red, color.green, color.blue,
-                                      color.alpha};
 
-        auto pass_result = device_->begin_clear_pass(*swapchain_, clear_color);
-        if (!pass_result.has_value()) {
-            failure_message_ =
-                std::string(pass_result.error().description());
-            std::fprintf(stderr, "pass failed: %s\n",
-                         std::string(pass_result.error().description()).c_str());
-            break;  // the swapchain is gone (window closed under us)
+        if (m2_path) {
+            // 1. Apply the UI thread's intents and advance the analytical
+            //    solutions to t_present; publish the snapshot (docs/02 §7).
+            configuration_.animation->tick_and_publish(t_present);
+
+            // 2. Resolve the frame: the newest committed packet, the fresh
+            //    presentation values, and the layer content, rasterized into
+            //    the draw pass (docs/02 §3 stage 2 — steps 4–7; merging and
+            //    batching land with the frame-pipeline work).
+            const auto packet = configuration_.layer_tree->latest_packet();
+            if (packet == nullptr || packet->layer_count() == 0) {
+                // No content yet: present the window background so the
+                // surface is never stale.
+                auto pass_result =
+                    device_->begin_clear_pass(*swapchain_, k_window_background);
+                if (!pass_result.has_value()) {
+                    failure_message_ =
+                        std::string(pass_result.error().description());
+                    std::fprintf(stderr, "pass failed: %s\n",
+                                 std::string(pass_result.error().description())
+                                     .c_str());
+                    break;  // the swapchain is gone (window closed under us)
+                }
+                auto pass = std::move(pass_result).take_value();
+                pass->end_and_present();
+
+                const core::Duration compositor_time =
+                    pass->submitted_at() - pass->acquired_at();
+                record_frame(core::Duration::zero(), compositor_time,
+                             compositor_time);
+            } else {
+                auto pass_result = device_->begin_draw_pass(*swapchain_);
+                if (!pass_result.has_value()) {
+                    failure_message_ =
+                        std::string(pass_result.error().description());
+                    std::fprintf(stderr, "pass failed: %s\n",
+                                 std::string(pass_result.error().description())
+                                     .c_str());
+                    break;  // the swapchain is gone (window closed under us)
+                }
+                auto pass = std::move(pass_result).take_value();
+                pass->clear(k_window_background);
+
+                // The resolve loop: parallel SoA rows (docs/02 §4.1), each
+                // resolving its presentation transform from the coordinator's
+                // snapshot, then drawing the layer's background attribute and
+                // its recorded content. Rows are in draw order (parents
+                // before children, siblings in insertion order).
+                const layer::FramePacket& frame = *packet;
+                const auto bounds = frame.bounds();
+                const auto corner_radii = frame.corner_radii();
+                const auto background_colors = frame.background_colors();
+                const auto transforms = frame.transforms();
+                const auto position_indices = frame.position_property_indices();
+                const auto opacity_indices = frame.opacity_property_indices();
+                const auto display_lists = frame.display_lists();
+                const animation::AnimationCoordinator& coordinator =
+                    *configuration_.animation;
+
+                for (std::size_t i = 0; i < frame.layer_count(); ++i) {
+                    const geometry::Point position{
+                        static_cast<float>(
+                            coordinator.presentation_value(
+                                position_indices[i], 0)),
+                        static_cast<float>(
+                            coordinator.presentation_value(
+                                position_indices[i], 1)),
+                    };
+                    const float opacity = static_cast<float>(
+                        coordinator.presentation_value(opacity_indices[i], 0));
+                    const geometry::AffineTransform layer_transform =
+                        geometry::AffineTransform::make_translation(
+                            position.x, position.y)
+                            .concatenating(transforms[i]);
+
+                    // The layer's own background: a compositor-resolvable
+                    // attribute (docs/02 §2.2), so animating it never needs
+                    // a re-record.
+                    const graphics::Color& background = background_colors[i];
+                    if (background.alpha > 0.0f) {
+                        const geometry::RoundedRectangle fill =
+                            geometry::RoundedRectangle::uniform(
+                                bounds[i], corner_radii[i]);
+                        const float color[4] = {
+                            background.red, background.green, background.blue,
+                            background.alpha};
+                        graphics::rasterizer::fill_rounded_rectangle(
+                            *pass, fill, layer_transform, color, opacity);
+                    }
+
+                    // The layer's recorded content (P7 — Level 3 → Level 2).
+                    const graphics::DisplayList& list = display_lists[i];
+                    if (!list.is_empty()) {
+                        graphics::rasterizer::draw(list, *pass, layer_transform,
+                                                   opacity);
+                    }
+                }
+
+                pass->end_and_present();
+
+                const core::Duration compositor_time =
+                    pass->submitted_at() - pass->acquired_at();
+                record_frame(core::Duration::zero(), compositor_time,
+                             compositor_time);
+            }
+
+            // 3. Idle decision: when everything is at rest and no work is
+            //    pending, stop waking. A repaint request arriving between
+            //    frames is honored by one more frame, then the idle check
+            //    runs again.
+            {
+                std::lock_guard lock{wake_mutex_};
+                if (repaint_requested_) {
+                    repaint_requested_ = false;
+                } else if (!configuration_.animation->has_active_animations()) {
+                    idle = true;
+                }
+            }
+        } else {
+            // M1 path: the analytic clear color (kept so the M1 demo and its
+            // timing contract keep running unchanged).
+            const graphics::Color color = [&] {
+                constexpr double k_seconds_per_cycle = 4.0;
+                const double hue = std::fmod(t_present.seconds() / k_seconds_per_cycle, 1.0);
+                const double sector = hue * 6.0;
+                const double region = std::floor(sector);
+                const double f = sector - region;
+                const double p = 0.0, q = 0.4 * (1.0 - f), t = 0.4 * (1.0 - (1.0 - f));
+                double r = 0.0, g = 0.0, b = 0.0;
+                switch (static_cast<int>(region)) {
+                case 0: r = 0.4, g = t, b = p; break;
+                case 1: r = q, g = 0.4, b = p; break;
+                case 2: r = p, g = 0.4, b = t; break;
+                case 3: r = p, g = q, b = 0.4; break;
+                case 4: r = t, g = p, b = 0.4; break;
+                default: r = 0.4, g = p, b = q; break;
+                }
+                return graphics::Color::srgb(static_cast<float>(r),
+                                             static_cast<float>(g),
+                                             static_cast<float>(b), 1.0f);
+            }();
+            const float clear_color[4] = {color.red, color.green, color.blue,
+                                          color.alpha};
+
+            auto pass_result = device_->begin_clear_pass(*swapchain_, clear_color);
+            if (!pass_result.has_value()) {
+                failure_message_ =
+                    std::string(pass_result.error().description());
+                std::fprintf(stderr, "pass failed: %s\n",
+                             std::string(pass_result.error().description()).c_str());
+                break;  // the swapchain is gone (window closed under us)
+            }
+            auto pass = std::move(pass_result).take_value();
+            pass->end_and_present();
+
+            const core::Duration compositor_time =
+                pass->submitted_at() - pass->acquired_at();
+            record_frame(core::Duration::zero(), compositor_time,
+                         compositor_time);
         }
-        auto pass = std::move(pass_result).take_value();
-        pass->end_and_present();
-
-        // The frame's work starts when the pacing wait released and ends at
-        // submission, so the recorded compositor time excludes the vsync
-        // wait itself. On backends where present blocks (SDL3), the pass
-        // records submitted_at before that block; on wait-at-start backends
-        // (D3D12) the wait is already before acquired_at.
-        const core::Duration compositor_time =
-            pass->submitted_at() - pass->acquired_at();
-        const core::Duration gpu_time =
-            pass->submitted_at() - pass->acquired_at();
-
-        // M1 has no UI thread; the stage exists so the CSV column does not
-        // shift when it lands.
-        record_frame(core::Duration::zero(), compositor_time, gpu_time);
     }
 }
 
@@ -198,11 +348,12 @@ void Compositor::record_frame(core::Duration ui, core::Duration compositor,
                               core::Duration gpu) {
     timing_.record_frame(ui, compositor, gpu);
     if (trace_file_.is_open()) {
-        trace_file_ << frame_count_ << ',' << ui.microseconds() << ','
-                    << compositor.microseconds() << ',' << gpu.microseconds()
-                    << '\n';
+        trace_file_ << frame_count_.load(std::memory_order_relaxed) << ','
+                    << ui.microseconds() << ','
+                    << compositor.microseconds() << ','
+                    << gpu.microseconds() << '\n';
     }
-    ++frame_count_;
+    frame_count_.fetch_add(1, std::memory_order_relaxed);
 }
 
 } // namespace ca::compositor

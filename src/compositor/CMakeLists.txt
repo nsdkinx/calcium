@@ -17,5 +17,6 @@ calcium_configure_module(calcium_compositor)
 
 target_link_libraries(calcium_compositor
     PUBLIC calcium_core calcium_geometry calcium_platform calcium_gpu
+           calcium_animation calcium_graphics calcium_layer
     PRIVATE calcium_backends
 )

@@ -62,6 +62,15 @@ a full tree sits on top of it.
 
 **The milestone that de-risks the entire project.**
 
+> **M2 status (2026-08-06):** shipped. The vertical slice runs on SDL3 only —
+> the display-list IR, recorder, and rasterizer emit into the `gpu::DrawPass`
+> (`src/graphics/rasterizer.cpp`), and the layer tree's SoA `FramePacket` is
+> what the compositor re-composites. Skia remains deferred behind the same
+> rasterizer seam by the SDL3-only backend policy (M1). The exit demo
+> `examples/03-spring-rectangle --verify` measures all four criteria green on
+> Windows; the remaining M2 items are the conformance suite, coverage AA, and
+> the tracer-backed frame-budget CI gate.
+
 - `ca::animation`: `AnimationCoordinator` wrapping Twell, `AnimatableProperty`,
   `Transaction`, `Motion`, `MotionScheme`, intent queue, triple-buffered
   presentation snapshot
